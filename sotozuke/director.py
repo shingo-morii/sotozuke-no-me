@@ -159,12 +159,12 @@ class Director:
         now = self.s.clock()
         if self.same_check_at is not None and now >= self.same_check_at:
             self.same_check_at = None
-            if (self.spoken and self.watcher.kind == TEXT_KIND and self.watcher.text.shows_last()
-                    and self.pending is None):
-                # 字の形では見分けられない別の文もあるので、前の結果を使わず読み手に読ませる
-                self.s.log("same_again", text=self.spoken[0])
-                if self.latest_frame is not None:
-                    self.band = crop(self.latest_frame, self.config.text.band).copy()
+            frame = self.latest_frame
+            if (frame is not None and self.watcher.kind == TEXT_KIND and self.pending is None
+                    and self.watcher.text.shows_last() and not self._voiced_now(frame)):
+                # 背景の模様まで字の形に入ると、別の文でも同じ文に見える。前の結果を使わず読み手に読ませる
+                self.s.log("same_again", text=self.spoken[0] if self.spoken else "")
+                self.band = crop(frame, self.config.text.band).copy()
                 self._read_sentence(self.band)
         if self.pending and not self.pending.failed and now >= self.pending.deadline:
             self.pending.failed = True
@@ -248,6 +248,12 @@ class Director:
         self.s.log("tag_gone")
         self.band = crop(frame, self.config.text.band).copy()
         self._read_sentence(self.band)
+
+    def _voiced_now(self, frame: np.ndarray) -> bool:
+        rule = self.config.voice_rule
+        if rule == "tag":
+            return has_name_tag(frame, self.config)
+        return rule != "all" and self.s.is_voice_playing()
 
     def _is_voiced(self, event: TextReady) -> bool:
         rule = self.config.voice_rule

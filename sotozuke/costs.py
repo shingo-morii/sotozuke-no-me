@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import os
 import json
 import threading
 import time
@@ -30,7 +31,7 @@ class BudgetExceeded(RuntimeError):
 @dataclass
 class CostLog:
     path: Path
-    limit_usd: float = 4.5
+    limit_usd: float = float(os.environ.get("SOTOZUKE_BUDGET_USD", "4.5"))
 
     def __post_init__(self):
         self.path = Path(self.path)

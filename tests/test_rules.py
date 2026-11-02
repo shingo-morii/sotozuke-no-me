@@ -133,6 +133,29 @@ def test_similar_sentence_after_key_is_read_as_new_text(game_path, style):
     assert sim.said("sentence") == [S[0], S[1]]
 
 
+def test_sentence_after_voiced_line_with_same_shape_is_read(game_path, style):
+    """声の文のあとに字の形が同じに見える声の無い文が出ても読む。"""
+    sim = sim_for(game_path, style)
+    sim.view = synth.View(scene=1, text=S[0], name="名前")
+    sim.run(3.0)
+    assert sim.said("sentence") == []
+    sim.press()
+    sim.view = synth.View(scene=1, text=S[0])
+    sim.run(3.0)
+    assert sim.said("sentence") == [S[0]]
+
+
+def test_voiced_line_with_same_shape_is_not_read(game_path, style):
+    """読み直しの保険は、札のある文を読まない。"""
+    sim = sim_for(game_path, style)
+    show(sim, S[0])
+    sim.run(3.5)
+    sim.press()
+    sim.view = synth.View(scene=1, text=S[0], name="名前")
+    sim.run(3.0)
+    assert sim.said("sentence") == [S[0]]
+
+
 def test_no_second_reading_when_the_text_changes(game_path, style):
     sim = sim_for(game_path, style)
     show(sim, S[0])
