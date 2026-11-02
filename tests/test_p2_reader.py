@@ -74,6 +74,12 @@ def fake_reader(tmp_path, blocks, limit=4.5):
     return ClaudeReader(CostLog(tmp_path / "costs.jsonl", limit_usd=limit), client=FakeClient(blocks))
 
 
+def test_refusal_wording_counts_as_no_text():
+    from sotozuke.reader import is_no_text
+    assert is_no_text("（何も返しません）")
+    assert is_no_text("画面に場所の名前は書かれていないため、何も返しません")
+
+
 def test_text_part_is_found_after_thinking():
     assert response_text(FakeResponse([Block("thinking"), Block("text", "本文")])) == "本文"
 

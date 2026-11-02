@@ -62,6 +62,11 @@ PROMPT_WALK = (
     "画像はゲームの歩く画面です。画面に場所の名前が書かれていれば、その名前だけを返してください。"
     "書かれていなければ何も返さないでください。"
 )
+PROMPT_WALK_VIEW = (
+    "画像はゲームの中を歩く画面です。目の見えない人に伝えます。画面の手前に背中を見せている人物は操作している主人公です。"
+    "それ以外の人物が、正面、左、右のどこに、近いか遠いかと、髪や服の見た目、進める通路の向きを、"
+    "80字以内の日本語で書いてください。説明の文だけを返してください。"
+)
 PROMPT_BACKLOG = (
     "画像はゲームの文字の履歴の画面です。いちばん明るく表示されている文だけを、一字も変えずに返してください。"
     "説明や飾りは付けないでください。"
@@ -106,7 +111,7 @@ def same_text(a: str, b: str) -> bool:
 
 def is_no_text(text: str) -> bool:
     """字が無いという返事か。読み手は頼んでも文で答えることがある。"""
-    if text in ("", "なし", "（なし）", "無し"):
+    if text in ("", "なし", "（なし）", "無し") or "何も返" in text:
         return True
     return bool(re.search(r"(画像|文字|テキスト)", text) and re.search(r"(ません|ない)[。.]?$", text))
 
@@ -264,4 +269,6 @@ class ClaudeReader:
     def read_plain(self, frame: np.ndarray, prompt: str, purpose: str) -> ReadResult:
         result = self.ask(frame, prompt, TEXT_MODEL, purpose, thinking=NO_THINKING)
         result.text = clean_text(result.text)
+        if is_no_text(result.text):
+            result.text = ""
         return result

@@ -112,14 +112,25 @@ def test_slower_presses_never_play_old_sentences(game_path, style, interval):
 
 
 def test_same_sentence_again_after_key_is_read_again(game_path, style):
-    """同じ文が続けて出ても読む。読み手は呼ばない。"""
+    """同じ文に見えても読み手に読ませる。字の形の似た別の文を、前の文として読まないため。"""
     sim = sim_for(game_path, style)
     show(sim, S[0])
     sim.run(3.5)
     sim.press()
     sim.run(3.0)
     assert sim.said("sentence") == [S[0], S[0]]
-    assert sim.reader.text_calls == 1
+    assert sim.reader.text_calls == 2
+
+
+def test_similar_sentence_after_key_is_read_as_new_text(game_path, style):
+    """字の形が似ていて新しい文と見えなくても、読み手の答えを読む。"""
+    sim = sim_for(game_path, style)
+    show(sim, S[0])
+    sim.run(3.5)
+    sim.reader.truth_text = lambda: S[1]
+    sim.press()
+    sim.run(3.0)
+    assert sim.said("sentence") == [S[0], S[1]]
 
 
 def test_no_second_reading_when_the_text_changes(game_path, style):

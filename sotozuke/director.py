@@ -161,9 +161,11 @@ class Director:
             self.same_check_at = None
             if (self.spoken and self.watcher.kind == TEXT_KIND and self.watcher.text.shows_last()
                     and self.pending is None):
-                # 同じ文が続けて出ると字の形では見分けられない。キーで進んだのに同じ字なら読み直す
+                # 字の形では見分けられない別の文もあるので、前の結果を使わず読み手に読ませる
                 self.s.log("same_again", text=self.spoken[0])
-                self._say(self.spoken[0], self.spoken[1], "sentence")
+                if self.latest_frame is not None:
+                    self.band = crop(self.latest_frame, self.config.text.band).copy()
+                self._read_sentence(self.band)
         if self.pending and not self.pending.failed and now >= self.pending.deadline:
             self.pending.failed = True
             self.s.log("fail", reason="timeout")
@@ -628,6 +630,9 @@ class Director:
         self.s.tasks.submit(work, lambda v, e: self._on_screen_text(generation, v, e))
 
     def _on_describe(self) -> None:
+        if self.watcher.kind == "walk":
+            self._describe_view()
+            return
         scene = self.scene
         if self.last_description is not None and (scene is None or scene.state != "generating"):
             text, audio = self.last_description
@@ -649,6 +654,30 @@ class Director:
                 self._play_tone(self.s.fail_tone, "fail")
                 return
             self.last_description = value
+            self._say(value[0], value[1], "description")
+
+        self.s.tasks.submit(work, done)
+
+    def _describe_view(self) -> None:
+        """歩く画面は動くので、前の説明を使わず今の画面を言葉にする。"""
+        frame = self.latest_frame
+        if frame is None:
+            return
+        generation = self._next_generation()
+        self._stop_sound()
+
+        def work():
+            result = self.s.reader.read_plain(frame, prompts.PROMPT_WALK_VIEW, "walk_view")
+            return (result.text, self.s.speech(result.text)) if result.text else None
+
+        def done(value, error):
+            if generation != self.generation:
+                self.s.log("drop_stale", what="walk_view", generation=generation)
+                return
+            if error is not None or value is None:
+                self.s.log("fail", reason=repr(error) if error else "empty", what="walk_view")
+                self._play_tone(self.s.fail_tone, "fail")
+                return
             self._say(value[0], value[1], "description")
 
         self.s.tasks.submit(work, done)

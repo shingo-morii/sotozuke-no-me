@@ -175,6 +175,17 @@ def test_walk_screen_says_where_and_what(game_path, style):
     assert sim.said("screen") == ["walkの字。歩く画面です。"]
 
 
+def test_describe_key_on_walk_screen_reads_the_current_view(game_path, style):
+    """歩く画面の説明キーは、前の場面の説明ではなく今の画面を読む。"""
+    sim = sim_for(game_path, style)
+    sim.view = synth.View(scene=1, hint=WALK_HINT)
+    sim.run(2.0)
+    sim.press("describe")
+    sim.run(2.0)
+    assert sim.said("description") == ["walk_viewの字"]
+    assert sim.reader.describe_calls == 0
+
+
 def test_walk_screen_not_treated_as_scene_change(game_path, style):
     """歩く画面も暗転の判定に入る。種類の判定を先にする。"""
     sim = sim_for(game_path, style)
