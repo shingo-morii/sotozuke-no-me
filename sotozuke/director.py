@@ -426,9 +426,10 @@ class Director:
         self.pending = Pending(generation, self.s.clock() + FAIL_AFTER_S + 2.0)
         kind = event.kind
         title = state.title
+        screen = event.screen
 
         def work():
-            text, new_title = self._read_screen(kind, frame, first, title)
+            text, new_title = self._read_screen(kind, screen, frame, first, title)
             if not text:
                 return None
             return text, new_title, self.s.speech(text)
@@ -446,7 +447,8 @@ class Director:
         self.s.log("screen_read", kind=kind, first=first)
         self.s.tasks.submit(work, done)
 
-    def _read_screen(self, kind: str, frame: np.ndarray, first: bool, title: str) -> tuple[str, str]:
+    def _read_screen(self, kind: str, screen: ScreenRule, frame: np.ndarray, first: bool,
+                     title: str) -> tuple[str, str]:
         reader = self.s.reader
         if kind == "menu":
             data, _ = reader.read_menu(frame)
@@ -461,7 +463,8 @@ class Director:
             message = str(data.get("message", ""))
             return (f"{message}。{selected}" if first else selected), message
         if kind == "map":
-            return reader.read_map(frame, moved=not first).text, title
+            prompt = screen.prompt if first else screen.prompt_move
+            return reader.read_map(frame, moved=not first, prompt=prompt).text, title
         if kind == "walk":
             name = reader.read_plain(frame, prompts.PROMPT_WALK, "walk").text
             return (f"{name}。歩く画面です。" if name else "歩く画面です。"), title

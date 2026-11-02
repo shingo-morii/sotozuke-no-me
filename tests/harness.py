@@ -131,7 +131,7 @@ class FakeReader:
         self._check()
         return {"message": "確認の文", "selected": "はい"}, FakeResult("")
 
-    def read_map(self, frame, moved):
+    def read_map(self, frame, moved, prompt=""):
         self.other_calls += 1
         return FakeResult("地図の説明")
 

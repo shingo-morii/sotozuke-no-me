@@ -20,6 +20,8 @@ TEXT_MODEL = "claude-haiku-5-5"
 PICTURE_MODEL = "claude-sonnet-5-5"
 # 字を読むだけなら思考は要らない。11/2 に10枚で比べて、正しさは同じだった
 NO_THINKING = {"type": "disabled"}
+# Sonnet は思考を切れないので effort を下げる。地図で約6秒が約3秒になった
+LOW_EFFORT = {"output_config": {"effort": "low"}}
 
 PROMPT_TEXT = (
     "画像はノベルゲームの本文の部分です。画像に書かれている字だけを、一字も変えずに返してください。"
@@ -190,7 +192,8 @@ class ClaudeReader:
         return parse_items(result.text), result
 
     def describe(self, frame: np.ndarray) -> ReadResult:
-        result = self.ask(frame, PROMPT_SCENE, PICTURE_MODEL, "scene", max_tokens=1500)
+        result = self.ask(frame, PROMPT_SCENE, PICTURE_MODEL, "scene", max_tokens=1500,
+                          extra_body=LOW_EFFORT)
         result.text = limit_description(result.text)
         return result
 
@@ -202,9 +205,9 @@ class ClaudeReader:
         result = self.ask(frame, PROMPT_CONFIRM, TEXT_MODEL, "confirm", thinking=NO_THINKING)
         return parse_object(result.text), result
 
-    def read_map(self, frame: np.ndarray, moved: bool) -> ReadResult:
-        prompt = PROMPT_MAP_MOVE if moved else PROMPT_MAP
-        result = self.ask(frame, prompt, PICTURE_MODEL, "map", max_tokens=1500)
+    def read_map(self, frame: np.ndarray, moved: bool, prompt: str = "") -> ReadResult:
+        prompt = prompt or (PROMPT_MAP_MOVE if moved else PROMPT_MAP)
+        result = self.ask(frame, prompt, PICTURE_MODEL, "map", max_tokens=1500, extra_body=LOW_EFFORT)
         result.text = clean_text(result.text)
         return result
 

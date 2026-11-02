@@ -79,7 +79,8 @@ class ScreenRule:
     box: Box
     template: Path
     threshold: float = 0.7
-    prompt: str = ""
+    prompt: str = ""       # ゲームごとの読み方。入った直後の読み手への頼み
+    prompt_move: str = ""  # カーソルを動かしたあとの頼み
     match: str = "glyph"   # glyph は字の形で比べる。pixel は窓の枠など字でないものを画素で比べる
 
 
@@ -168,6 +169,7 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
                 template=_load_template_path(base, raw["template"], label),
                 threshold=float(raw.get("threshold", 0.7)),
                 prompt=raw.get("prompt", ""),
+                prompt_move=raw.get("prompt_move", ""),
                 match=raw.get("match", "glyph"),
             ))
 
