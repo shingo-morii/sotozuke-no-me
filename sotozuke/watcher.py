@@ -97,6 +97,20 @@ class TextTracker:
             self.emptied = False
         return is_new
 
+    def flush(self) -> bool:
+        """止まりきる前に別の画面が重なったとき、見ていた文が新しい文かを決める。"""
+        if self.reference is None or self.judged:
+            return False
+        self.judged = True
+        mask = self.reference
+        is_new = (self.last is None or self.emptied
+                  or overlap(mask, self.last) < self.rule.new_overlap
+                  or new_pixels(mask, self.last) > int(self.last.sum() * 0.15))
+        if is_new:
+            self.last = mask
+            self.emptied = False
+        return is_new
+
     def _still(self, mask: np.ndarray) -> bool:
         added = new_pixels(mask, self.reference)
         allowed = max(30, int(self.reference.sum() * 0.02))
@@ -192,12 +206,8 @@ def has_name_tag(frame: np.ndarray, config: GameConfig) -> bool:
         line = rows[2:5].max(axis=0)
         around = (rows[0] + rows[6]) / 2
         return int((line - around >= tag.contrast).sum()) >= tag.min_cols
-    if tag.kind == "fill":
-        # 札が塗りの四角のゲーム。横に続く色の差で見る
-        area = crop(frame, tag.box).astype(np.int16)
-        spread = area.max(axis=2) - area.min(axis=2)
-        return int((np.median(spread, axis=0) >= 60).sum()) >= tag.min_cols
     if tag.kind == "glyph":
+        # 名前の字が決まった位置に出るゲーム。min_cols は字の点の数
         mask = glyph_mask(to_gray(crop(frame, tag.box)), config.glyph)
         return int(mask.sum()) >= tag.min_cols
     raise ValueError(f"札の見分け方が違います: {tag.kind}")
@@ -233,6 +243,10 @@ class Watcher:
                 self.pending = screen.name if screen else TEXT_KIND
                 self.pending_count = 1
             if self.pending_count >= KIND_CONFIRM_FRAMES:
+                # 文のすぐあとに選択肢が重なると、文が止まりきらない。読み落とさないように知らせる
+                if self.kind == TEXT_KIND and new_kind == "choice" and self.text.flush():
+                    band = crop(frame, self.config.text.band)
+                    events.append(TextReady(t, band.copy(), has_name_tag(frame, self.config), frame))
                 events.append(KindChanged(t, self.kind, new_kind, screen, frame))
                 self.kind = new_kind
                 self.screen = screen

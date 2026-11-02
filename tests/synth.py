@@ -22,6 +22,9 @@ FONT_CANDIDATES = [
 ]
 
 
+MOTION = 0.15  # 背景の動きの速さ
+
+
 def font_path() -> str | None:
     for path in FONT_CANDIDATES:
         if Path(path).exists():
@@ -80,15 +83,14 @@ STYLES = {"a": STYLE_A, "b": STYLE_B}
 def background(style: Style, scene: int, t: float = 0.0, moving: bool = True) -> np.ndarray:
     """場面ごとに違う、なめらかに動く背景を作る。"""
     # 描くのが重いので、動きは0.5秒きざみにして覚えておく
-    return _background(style, scene, round(t * 2) / 2 if moving else 0.0)
+    return _background(style, scene, round(t * 2) / 2 * MOTION if moving else 0.0)
 
 
 @lru_cache(maxsize=256)
-def _background(style: Style, scene: int, t: float) -> np.ndarray:
+def _background(style: Style, scene: int, phase: float) -> np.ndarray:
     w, h = style.size
     y, x = np.mgrid[0:h, 0:w].astype(np.float32)
     seed = scene * 37 % 97 / 97.0
-    phase = t * 0.15
     r = 110 + 70 * np.sin(x / (160 + 40 * seed) + 6 * seed + phase)
     g = 120 + 60 * np.sin(y / (120 + 50 * seed) + 11 * seed)
     b = 130 + 80 * np.sin((x + y) / (240 + 60 * seed) + 3 * seed - phase)
@@ -289,7 +291,7 @@ def write_game(style: Style, folder: Path, voice_rule: str = "tag") -> Path:
         data["tag"] = {"kind": "hline", "y": style.tag_y, "x0": 36,
                        "x1": style.size[0] - 36, "min_cols": 600}
     else:
-        data["tag"] = {"kind": "fill", "box": [170, 492, 420, 526], "min_cols": 150}
+        data["tag"] = {"kind": "glyph", "box": [170, 492, 420, 526], "min_cols": 30}
     path = folder / f"synth_{style.name}.json"
     path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     return path

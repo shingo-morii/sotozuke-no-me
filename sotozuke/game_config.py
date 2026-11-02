@@ -39,7 +39,6 @@ class GlyphRule:
     bright: int = 190
     dark: int = 110
     radius: int = 2
-    dark_on_light: bool = False  # 明るい窓に暗い字のゲーム
 
 
 @dataclass(frozen=True)
@@ -81,7 +80,6 @@ class ScreenRule:
     template: Path
     threshold: float = 0.7
     prompt: str = ""
-    max_light_ratio: float = 0.6  # 字でない所まで明るい画面を外す
 
 
 @dataclass(frozen=True)
@@ -89,6 +87,22 @@ class ChoiceRule:
     box: Box                         # 全項目が入る範囲
     rows_by_count: dict[int, list[Box]] = field(default_factory=dict)
     strip_label: bool = True
+
+    def rows_for(self, count: int) -> list[Box]:
+        """項目の数ごとの行の位置。知らない数は、知っている2つの数から伸ばして求める。"""
+        if count in self.rows_by_count:
+            return self.rows_by_count[count]
+        known = sorted(self.rows_by_count)
+        if len(known) < 2:
+            return []
+        a, b = known[0], known[-1]
+        first_a, first_b = self.rows_by_count[a][0], self.rows_by_count[b][0]
+        pitch = self.rows_by_count[a][1][1] - first_a[1]
+        shift = (first_b[1] - first_a[1]) / (b - a)
+        top = round(first_a[1] + shift * (count - a))
+        height = first_a[3] - first_a[1]
+        return [(first_a[0], top + i * pitch, first_a[2], top + i * pitch + height)
+                for i in range(count)]
 
 
 @dataclass(frozen=True)
@@ -153,7 +167,6 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
                 template=_load_template_path(base, raw["template"], label),
                 threshold=float(raw.get("threshold", 0.7)),
                 prompt=raw.get("prompt", ""),
-                max_light_ratio=float(raw.get("max_light_ratio", 0.6)),
             ))
 
         choice = None

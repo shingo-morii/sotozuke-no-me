@@ -36,6 +36,37 @@ PROMPT_SCENE = (
 )
 
 
+PROMPT_MENU = (
+    "画像はゲームのメニュー画面です。次の形の JSON だけを返してください。"
+    '{"title": "画面の題", "items": ["上から順の項目"], "selected": "いま選ばれている項目の字"}。'
+    "選ばれている項目は、色や明るさが周りと違う項目です。データの枠なら、枠の中の字を1つの項目にしてください。"
+)
+PROMPT_CONFIRM = (
+    "画像はゲームの確認の窓が重なった画面です。窓の中だけを見て、次の形の JSON だけを返してください。"
+    '{"message": "窓の中の文", "selected": "いま選ばれているボタンの字"}'
+)
+PROMPT_MAP = (
+    "画像はノベルゲームの行き先を選ぶ地図です。目の見えない人に伝えます。選べる場所と、そこにいる人の見た目、"
+    "いま選ばれている行き先を、100字以内の日本語で書いてください。説明の文だけを返してください。"
+)
+PROMPT_MAP_MOVE = (
+    "画像はノベルゲームの行き先を選ぶ地図です。いま選ばれている行き先の名前と、そこにいる人の見た目を、"
+    "40字以内の日本語で書いてください。説明の文だけを返してください。"
+)
+PROMPT_WALK = (
+    "画像はゲームの歩く画面です。画面に場所の名前が書かれていれば、その名前だけを返してください。"
+    "書かれていなければ何も返さないでください。"
+)
+PROMPT_BACKLOG = (
+    "画像はゲームの文字の履歴の画面です。いちばん明るく表示されている文だけを、一字も変えずに返してください。"
+    "説明や飾りは付けないでください。"
+)
+PROMPT_ALL = (
+    "画像はゲームの画面です。画面に書かれている字を、読む順に、そのまま返してください。"
+    "説明や飾りは付けないでください。字がなければ何も返さないでください。"
+)
+
+
 class ReaderError(RuntimeError):
     pass
 
@@ -55,6 +86,8 @@ def clean_text(raw: str) -> str:
     text = raw.strip()
     text = re.sub(r"\*\*|__|`", "", text)
     text = re.sub(r"\s*\n\s*", "", text)
+    # 文の途中の ？ や ！ のあとの空きは、幅の読み取りが揺れるので全角の空きにそろえる
+    text = re.sub(r"([？！])[ 　]*(?=[^？！」』）\s])", "\\1　", text)
     return text.strip()
 
 
@@ -67,6 +100,17 @@ def parse_items(raw: str) -> list[str]:
     if not (isinstance(items, list) and all(isinstance(i, str) for i in items)):
         raise ReaderError(f"項目の形が違う: {raw[:80]}")
     return [clean_text(i) for i in items]
+
+
+def parse_object(raw: str) -> dict:
+    """JSON のオブジェクトを取り出す。"""
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not match:
+        raise ReaderError(f"JSON が見つからない: {raw[:80]}")
+    data = json.loads(match.group(0))
+    if not isinstance(data, dict):
+        raise ReaderError(f"JSON の形が違う: {raw[:80]}")
+    return data
 
 
 def limit_description(text: str, max_sentences: int = 2, max_chars: int = 60) -> str:
@@ -148,4 +192,23 @@ class ClaudeReader:
     def describe(self, frame: np.ndarray) -> ReadResult:
         result = self.ask(frame, PROMPT_SCENE, PICTURE_MODEL, "scene")
         result.text = limit_description(result.text)
+        return result
+
+    def read_menu(self, frame: np.ndarray) -> tuple[dict, ReadResult]:
+        result = self.ask(frame, PROMPT_MENU, TEXT_MODEL, "menu", thinking=NO_THINKING, max_tokens=800)
+        return parse_object(result.text), result
+
+    def read_confirm(self, frame: np.ndarray) -> tuple[dict, ReadResult]:
+        result = self.ask(frame, PROMPT_CONFIRM, TEXT_MODEL, "confirm", thinking=NO_THINKING)
+        return parse_object(result.text), result
+
+    def read_map(self, frame: np.ndarray, moved: bool) -> ReadResult:
+        prompt = PROMPT_MAP_MOVE if moved else PROMPT_MAP
+        result = self.ask(frame, prompt, PICTURE_MODEL, "map")
+        result.text = clean_text(result.text)
+        return result
+
+    def read_plain(self, frame: np.ndarray, prompt: str, purpose: str) -> ReadResult:
+        result = self.ask(frame, prompt, TEXT_MODEL, purpose, thinking=NO_THINKING)
+        result.text = clean_text(result.text)
         return result

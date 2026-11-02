@@ -83,6 +83,12 @@ def test_decorations_are_removed():
     assert clean_text("  `文`\n") == "文"
 
 
+def test_space_after_question_mark_is_normalized():
+    for raw in ("え？ 今なんて言ったの？", "え？今なんて言ったの？", "え？　今なんて言ったの？"):
+        assert clean_text(raw) == "え？　今なんて言ったの？"
+    assert clean_text("えっ！？本当？」") == "えっ！？　本当？」"
+
+
 def test_items_are_parsed_with_extra_words():
     assert parse_items('こちらです。\n["一つ目", "二つ目"]') == ["一つ目", "二つ目"]
     with pytest.raises(ReaderError):
