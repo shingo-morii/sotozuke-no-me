@@ -1,0 +1,283 @@
+"""見張り。API を呼ばず、10コマ毎秒の画面から出来事を取り出す。
+
+画面の種類を先に決める。名前の札の線は選択肢や履歴の画面でも出るので、
+案内の字の形で種類を決めてから、文の画面でだけ札を見る。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import numpy as np
+from PIL import Image
+
+from .game_config import GameConfig, ScreenRule
+from .image_ops import crop, dilate, glyph_mask, new_pixels, overlap, small_gray, to_gray
+
+TEXT_KIND = "text"
+KIND_CONFIRM_FRAMES = 2
+SETTLE_FRAMES = 2
+SETTLE_CELL_DIFF = 25
+SETTLE_CELLS = 3
+
+
+@dataclass
+class TextReady:
+    """文が出きった。"""
+    t: float
+    band: np.ndarray
+    has_tag: bool
+    frame: np.ndarray = field(repr=False, default=None)
+
+
+@dataclass
+class KindChanged:
+    t: float
+    old: str
+    new: str
+    screen: ScreenRule | None
+    frame: np.ndarray = field(repr=False, default=None)
+
+
+@dataclass
+class SceneDawn:
+    """暗転や白飛びが明け、絵が落ち着いた。"""
+    t: float
+    frame: np.ndarray = field(repr=False, default=None)
+    kind: str = TEXT_KIND
+
+
+@dataclass
+class ScreenSettled:
+    """文の画面でないときに、画面の変化が落ち着いた。"""
+    t: float
+    kind: str
+    screen: ScreenRule | None
+    frame: np.ndarray = field(repr=False, default=None)
+
+
+class TextTracker:
+    """本文の帯の字の形を見て、文が出きった瞬間を知らせる。"""
+
+    def __init__(self, config: GameConfig):
+        self.rule = config.text
+        self.glyph = config.glyph
+        self.reference: np.ndarray | None = None
+        self.reference_t = 0.0
+        self.judged = False
+        self.last: np.ndarray | None = None
+        self.emptied = False
+
+    def on_key(self) -> None:
+        """キーが押されたら、そこから止まるのを待ち直す。連打の途中の文を読まないため。"""
+        self.reference = None
+        self.judged = False
+
+    def feed(self, band_rgb: np.ndarray, t: float) -> bool:
+        mask = glyph_mask(to_gray(band_rgb), self.glyph)
+        count = int(mask.sum())
+        if count < self.rule.min_pixels:
+            self.reference = None
+            self.judged = False
+            self.emptied = True
+            return False
+        if self.reference is None or not self._still(mask):
+            self.reference = mask
+            self.reference_t = t
+            self.judged = False
+            return False
+        if self.judged or t - self.reference_t < self.rule.stable_s:
+            return False
+        self.judged = True
+        is_new = (self.last is None or self.emptied
+                  or overlap(mask, self.last) < self.rule.new_overlap
+                  # 左にそろえたゲームでは、前の文に字が足されただけの文もある
+                  or new_pixels(mask, self.last) > int(self.last.sum() * 0.15))
+        if is_new:
+            self.last = mask
+            self.emptied = False
+        return is_new
+
+    def _still(self, mask: np.ndarray) -> bool:
+        added = new_pixels(mask, self.reference)
+        allowed = max(30, int(self.reference.sum() * 0.02))
+        return added <= allowed
+
+
+class SceneTracker:
+    """画面の上の部分が真っ黒か真っ白を通り、そのあと落ち着いた瞬間を知らせる。"""
+
+    def __init__(self, config: GameConfig):
+        self.rule = config.scene
+        self.state = "lit"
+        self.extreme_since = 0.0
+        self.previous: np.ndarray | None = None
+        self.quiet = 0
+
+    def feed(self, frame: np.ndarray, t: float) -> bool:
+        rule = self.rule
+        sample = small_gray(frame, rule.box)
+        level = float(sample.mean())
+        extreme = level < rule.dark_below or level > rule.bright_above
+        previous, self.previous = self.previous, sample
+
+        if self.state == "lit":
+            if extreme:
+                self.state = "extreme"
+                self.extreme_since = t
+            return False
+        if self.state == "extreme":
+            if not extreme:
+                if t - self.extreme_since >= rule.min_dark_s:
+                    self.state = "settling"
+                    self.quiet = 0
+                else:
+                    self.state = "lit"
+            return False
+        # 明けたあと、絵が落ち着くのを待つ
+        if extreme:
+            self.state = "extreme"
+            return False
+        diff = float(np.abs(sample.astype(np.int16) - previous.astype(np.int16)).mean())
+        self.quiet = self.quiet + 1 if diff < rule.settle_diff else 0
+        if self.quiet >= rule.settle_frames:
+            self.state = "lit"
+            return True
+        return False
+
+
+class ScreenClassifier:
+    """案内の字の形を見本と比べて、画面の種類を決める。"""
+
+    def __init__(self, config: GameConfig):
+        self.glyph = config.glyph
+        self.screens = [(s, self._template(s)) for s in config.screens]
+
+    def _template(self, screen: ScreenRule) -> np.ndarray:
+        image = np.asarray(Image.open(screen.template).convert("RGB"))
+        mask = glyph_mask(to_gray(image), self.glyph)
+        if not mask.any():
+            raise ValueError(f"見本に字がありません: {screen.template}")
+        return mask
+
+    def scores(self, frame: np.ndarray) -> list[tuple[ScreenRule, float]]:
+        out = []
+        for screen, template in self.screens:
+            mask = glyph_mask(to_gray(crop(frame, screen.box)), self.glyph)
+            out.append((screen, overlap(mask, template)))
+        return out
+
+    def classify(self, frame: np.ndarray) -> ScreenRule | None:
+        """基準を超えたもののうち、いちばん重なる見本を選ぶ。似た案内の画面を取り違えないため。"""
+        best = None
+        best_score = 0.0
+        masks: dict = {}
+        for screen, template in self.screens:
+            mask = masks.get(screen.box)
+            if mask is None:
+                mask = glyph_mask(to_gray(crop(frame, screen.box)), self.glyph)
+                masks[screen.box] = mask
+            score = overlap(mask, template)
+            if score >= screen.threshold and score > best_score:
+                best, best_score = screen, score
+        return best
+
+
+def has_name_tag(frame: np.ndarray, config: GameConfig) -> bool:
+    """名前の札があるか。文の画面でだけ呼ぶ。"""
+    tag = config.tag
+    if tag is None:
+        return False
+    if tag.kind == "hline":
+        rows = to_gray(frame[tag.y - 3:tag.y + 4, tag.x0:tag.x1]).astype(np.int16)
+        line = rows[2:5].max(axis=0)
+        around = (rows[0] + rows[6]) / 2
+        return int((line - around >= tag.contrast).sum()) >= tag.min_cols
+    if tag.kind == "fill":
+        # 札が塗りの四角のゲーム。横に続く色の差で見る
+        area = crop(frame, tag.box).astype(np.int16)
+        spread = area.max(axis=2) - area.min(axis=2)
+        return int((np.median(spread, axis=0) >= 60).sum()) >= tag.min_cols
+    if tag.kind == "glyph":
+        mask = glyph_mask(to_gray(crop(frame, tag.box)), config.glyph)
+        return int(mask.sum()) >= tag.min_cols
+    raise ValueError(f"札の見分け方が違います: {tag.kind}")
+
+
+class Watcher:
+    """1コマごとに呼ぶ。出来事の一覧を返す。"""
+
+    def __init__(self, config: GameConfig):
+        self.config = config
+        self.text = TextTracker(config)
+        self.scene = SceneTracker(config) if config.scene else None
+        self.classifier = ScreenClassifier(config)
+        self.kind = TEXT_KIND
+        self.screen: ScreenRule | None = None
+        self.pending: ScreenRule | None | str = "none"
+        self.pending_count = 0
+        self.settle_previous: np.ndarray | None = None
+        self.settle_count = 0
+        self.settled_sample: np.ndarray | None = None
+
+    def on_key(self) -> None:
+        self.text.on_key()
+
+    def feed(self, frame: np.ndarray, t: float) -> list:
+        events: list = []
+        screen = self.classifier.classify(frame)
+        new_kind = screen.kind if screen else TEXT_KIND
+        if new_kind != self.kind or (screen and self.screen and screen.name != self.screen.name):
+            if self.pending == (screen.name if screen else TEXT_KIND):
+                self.pending_count += 1
+            else:
+                self.pending = screen.name if screen else TEXT_KIND
+                self.pending_count = 1
+            if self.pending_count >= KIND_CONFIRM_FRAMES:
+                events.append(KindChanged(t, self.kind, new_kind, screen, frame))
+                self.kind = new_kind
+                self.screen = screen
+                self.settled_sample = None
+                self.settle_count = 0
+        else:
+            self.pending = "none"
+            self.pending_count = 0
+
+        if self.scene is not None and self.scene.feed(frame, t):
+            events.append(SceneDawn(t, frame, self.kind))
+
+        if self.kind == TEXT_KIND:
+            # 種類が確定する前のコマも、文の画面でなければ本文として見ない
+            if screen is None:
+                band = crop(frame, self.config.text.band)
+                if self.text.feed(band, t):
+                    events.append(TextReady(t, band.copy(), has_name_tag(frame, self.config), frame))
+        else:
+            settled = self._screen_settled(frame, t)
+            if settled:
+                events.append(settled)
+        return events
+
+    def _screen_settled(self, frame: np.ndarray, t: float) -> ScreenSettled | None:
+        sample = small_gray(frame)
+        previous, self.settle_previous = self.settle_previous, sample
+        if previous is None or _changed(sample, previous):
+            self.settle_count = 0
+            return None
+        self.settle_count += 1
+        if self.settle_count < SETTLE_FRAMES:
+            return None
+        if self.settled_sample is not None and not _changed(sample, self.settled_sample):
+            return None
+        self.settled_sample = sample
+        return ScreenSettled(t, self.kind, self.screen, frame)
+
+
+def _changed(a: np.ndarray, b: np.ndarray) -> bool:
+    diff = np.abs(a.astype(np.int16) - b.astype(np.int16))
+    return int((diff > SETTLE_CELL_DIFF).sum()) >= SETTLE_CELLS
+
+
+__all__ = [
+    "KindChanged", "SceneDawn", "ScreenClassifier", "ScreenSettled", "TEXT_KIND",
+    "TextReady", "TextTracker", "Watcher", "dilate", "has_name_tag",
+]
