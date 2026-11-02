@@ -190,7 +190,7 @@ class ClaudeReader:
         return parse_items(result.text), result
 
     def describe(self, frame: np.ndarray) -> ReadResult:
-        result = self.ask(frame, PROMPT_SCENE, PICTURE_MODEL, "scene")
+        result = self.ask(frame, PROMPT_SCENE, PICTURE_MODEL, "scene", max_tokens=1500)
         result.text = limit_description(result.text)
         return result
 
@@ -204,7 +204,7 @@ class ClaudeReader:
 
     def read_map(self, frame: np.ndarray, moved: bool) -> ReadResult:
         prompt = PROMPT_MAP_MOVE if moved else PROMPT_MAP
-        result = self.ask(frame, prompt, PICTURE_MODEL, "map")
+        result = self.ask(frame, prompt, PICTURE_MODEL, "map", max_tokens=1500)
         result.text = clean_text(result.text)
         return result
 

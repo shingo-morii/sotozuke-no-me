@@ -167,32 +167,43 @@ class ScreenClassifier:
         self.screens = [(s, self._template(s)) for s in config.screens]
 
     def _template(self, screen: ScreenRule) -> np.ndarray:
-        image = np.asarray(Image.open(screen.template).convert("RGB"))
-        mask = glyph_mask(to_gray(image), self.glyph)
+        gray = to_gray(np.asarray(Image.open(screen.template).convert("RGB")))
+        if screen.match == "pixel":
+            return gray
+        mask = glyph_mask(gray, self.glyph)
         if not mask.any():
             raise ValueError(f"見本に字がありません: {screen.template}")
         return mask
 
-    def scores(self, frame: np.ndarray) -> list[tuple[ScreenRule, float]]:
-        out = []
-        for screen, template in self.screens:
+    def _score(self, frame: np.ndarray, screen: ScreenRule, template: np.ndarray, masks: dict) -> float:
+        if screen.match == "pixel":
+            gray = to_gray(crop(frame, screen.box)).astype(np.int16)
+            return 1.0 - float(np.abs(gray - template).mean()) / 255.0
+        mask = masks.get(screen.box)
+        if mask is None:
             mask = glyph_mask(to_gray(crop(frame, screen.box)), self.glyph)
-            out.append((screen, overlap(mask, template)))
-        return out
+            masks[screen.box] = mask
+        return overlap(mask, template)
+
+    def scores(self, frame: np.ndarray) -> list[tuple[ScreenRule, float]]:
+        masks: dict = {}
+        return [(s, self._score(frame, s, t, masks)) for s, t in self.screens]
 
     def classify(self, frame: np.ndarray) -> ScreenRule | None:
-        """基準を超えたもののうち、いちばん重なる見本を選ぶ。似た案内の画面を取り違えないため。"""
+        """基準を超えたもののうち、いちばん重なる見本を選ぶ。似た案内の画面を取り違えないため。
+
+        確認の窓のように重なる画面は、下の画面より先に見る。設定の並びで pixel を前に置く。
+        """
         best = None
         best_score = 0.0
         masks: dict = {}
         for screen, template in self.screens:
-            mask = masks.get(screen.box)
-            if mask is None:
-                mask = glyph_mask(to_gray(crop(frame, screen.box)), self.glyph)
-                masks[screen.box] = mask
-            score = overlap(mask, template)
-            if score >= screen.threshold and score > best_score:
-                best, best_score = screen, score
+            score = self._score(frame, screen, template, masks)
+            if score >= screen.threshold:
+                if screen.match == "pixel":
+                    return screen
+                if score > best_score:
+                    best, best_score = screen, score
         return best
 
 

@@ -80,6 +80,7 @@ class ScreenRule:
     template: Path
     threshold: float = 0.7
     prompt: str = ""
+    match: str = "glyph"   # glyph は字の形で比べる。pixel は窓の枠など字でないものを画素で比べる
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,7 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
                 template=_load_template_path(base, raw["template"], label),
                 threshold=float(raw.get("threshold", 0.7)),
                 prompt=raw.get("prompt", ""),
+                match=raw.get("match", "glyph"),
             ))
 
         choice = None

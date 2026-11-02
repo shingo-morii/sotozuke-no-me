@@ -159,6 +159,7 @@ def render(style: Style, view: View, t: float = 0.0) -> np.ndarray:
         w, h = style.size
         draw.rectangle((w // 5, h // 3, w * 4 // 5, h // 2), fill=(240, 235, 235, 255))
         draw.text((w // 2, h * 5 // 12), view.card, font=font(36), fill=(50, 40, 40), anchor="mm")
+        _draw_hint(style, draw, "日付と時刻")
 
     image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
     out = np.asarray(image, dtype=np.uint8).copy()
@@ -259,6 +260,7 @@ def write_game(style: Style, folder: Path, voice_rule: str = "tag") -> Path:
         "walk": ("歩く", "walk", "前後左右 移動  話す  地図  設定"),
         "save": ("セーブ", "menu", "上下左右 選択  決定  戻る"),
         "log": ("履歴", "backlog", "上下 送り  再生  閉じる"),
+        "card": ("札", "card", "日付と時刻"),
     }
     screens = []
     x0, y0, x1, y1 = style.hint_box
@@ -269,6 +271,14 @@ def write_game(style: Style, folder: Path, voice_rule: str = "tag") -> Path:
         Image.fromarray(patch).save(folder / file)
         screens.append({"name": name, "kind": kind, "box": list(style.hint_box),
                         "template": file, "threshold": 0.7})
+
+    # 確認の窓は字でなく枠の絵で見分ける。下の画面より先に見るので前に置く
+    w, h = style.size
+    box = (w // 4, h * 3 // 8, w // 4 + 60, h * 3 // 8 + 20)
+    frame = render(style, View(scene=0, confirm="確認の文"))
+    Image.fromarray(frame[box[1]:box[3], box[0]:box[2]]).save(folder / "tpl_confirm.png")
+    screens.insert(0, {"name": "確認の窓", "kind": "confirm", "box": list(box),
+                       "template": "tpl_confirm.png", "threshold": 0.97, "match": "pixel"})
 
     rows = {str(n): [list(b) for b in choice_rows(style, n)] for n in (2, 3, 4, 5)}
     all_rows = choice_rows(style, 5)
