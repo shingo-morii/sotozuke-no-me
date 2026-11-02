@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
@@ -87,8 +88,10 @@ class ChoiceSession:
     intro_audio: np.ndarray | None = None
     rows: list[tuple[int, int, int, int]] = field(default_factory=list)
     selected: int | None = None
+    candidate: int | None = None
     moved: bool = False
     ready: bool = False
+    closing: bool = False
 
 
 @dataclass
@@ -200,7 +203,8 @@ class Director:
             result = self.s.reader.read_text(band)
             if not result.text:
                 return None
-            return result.text, self.s.speech(result.text)
+            text = speakable(result.text)
+            return text, self.s.speech(text)
 
         self.s.log("read_start", generation=generation)
         self.s.tasks.submit(work, lambda value, error: self._on_sentence(generation, value, error))
@@ -321,7 +325,8 @@ class Director:
         elif event.new == "card":
             self._read_card(event)
         elif event.new != TEXT_KIND:
-            self.screen = ScreenState(event.screen)
+            if event.new != "loading":
+                self.screen = ScreenState(event.screen)
             scene = self.scene
             if scene and scene.state == "generating":
                 # 暗転のあとに出たのは場面でなくメニューだった。説明は捨てる
@@ -375,9 +380,17 @@ class Director:
 
     def _track_choice(self, frame: np.ndarray) -> None:
         session = self.choice
+        if session.closing:
+            return
         index = selected_row(frame, session.rows)
         if index == session.selected:
+            session.candidate = None
             return
+        # 帯が動く途中のコマで順位が揺れるので、同じ行が2コマ続いたら確定する
+        if index != session.candidate:
+            session.candidate = index
+            return
+        session.candidate = None
         session.selected = index
         session.moved = True
         self._next_generation()
@@ -494,6 +507,8 @@ class Director:
         """押した瞬間に読み上げを止める。作っている途中の結果は鳴らさない。"""
         self.watcher.on_key()
         self.last_key_t = self.s.clock()
+        if self.choice:
+            self.choice.closing = True  # 決定のあとの動きは読まない
         self._next_generation()
         self._stop_sound()
         self.after_speech = None
@@ -508,6 +523,7 @@ class Director:
 
     def _on_cursor(self) -> None:
         self.last_key_t = self.s.clock()
+        self.watcher.expect_change()
 
     def _on_stop(self) -> None:
         self._stop_sound()
@@ -630,6 +646,16 @@ class Director:
         if not self.s.sound.playing:
             self.speaking = None
             self.s.sound.play(tone)
+
+
+def speakable(text: str) -> str:
+    """点だけの文は声にならないので、無言と伝える。"""
+    if re.fullmatch(r"[…‥・。、．.！？!?ー―－\-〜～\s]*", text):
+        return "無言。"
+    # 点だけの文は、読み手が同じ字の並びに読み違えることがある
+    if len(text) >= 4 and len(set(text)) == 1:
+        return "無言。"
+    return text
 
 
 def _same_picture(a: np.ndarray, b: np.ndarray) -> bool:

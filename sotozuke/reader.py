@@ -7,6 +7,8 @@ import json
 import os
 import re
 import time
+import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,11 +24,12 @@ PICTURE_MODEL = "claude-sonnet-5-5"
 NO_THINKING = {"type": "disabled"}
 # Sonnet は思考を切れないので effort を下げる。地図で約6秒が約3秒になった
 LOW_EFFORT = {"output_config": {"effort": "low"}}
+TEXT_SCALE = 3  # 本文を読むときの拡大の倍率。読み違えた文で6回中6回正しくなった
 
 PROMPT_TEXT = (
     "画像はノベルゲームの本文の部分です。画像に書かれている字だけを、一字も変えずに返してください。"
     "改行はつなげてください。説明、引用符、飾りは付けないでください。"
-    "字がなければ何も返さないでください。"
+    "点だけの文は「……」と返してください。字がなければ「なし」とだけ返してください。"
 )
 PROMPT_ITEMS = (
     "画像はノベルゲームの選択肢です。各項目の字を、上から順に JSON の文字列の配列だけで返してください。"
@@ -93,6 +96,21 @@ def clean_text(raw: str) -> str:
     return text.strip()
 
 
+def same_text(a: str, b: str) -> bool:
+    """読み上げの音が同じなら同じ文と見なす。数字の全角半角、かぎかっこの種類、空きは問わない。"""
+    def shape(text: str) -> str:
+        text = unicodedata.normalize("NFKC", text)
+        return re.sub(r"[「」『』\s]", "", text)
+    return shape(a) == shape(b)
+
+
+def is_no_text(text: str) -> bool:
+    """字が無いという返事か。読み手は頼んでも文で答えることがある。"""
+    if text in ("", "なし", "（なし）", "無し"):
+        return True
+    return bool(re.search(r"(画像|文字|テキスト)", text) and re.search(r"(ません|ない)[。.]?$", text))
+
+
 def parse_items(raw: str) -> list[str]:
     """JSON の配列を取り出す。余分な文が付いていても探す。"""
     match = re.search(r"\[.*\]", raw, re.DOTALL)
@@ -128,6 +146,12 @@ def limit_description(text: str, max_sentences: int = 2, max_chars: int = 60) ->
     return out
 
 
+def enlarge(image: np.ndarray, scale: int = TEXT_SCALE) -> np.ndarray:
+    """小さな字は拡大してから見せる。そのままだと「んじゃ」を「ンジャ」と読むことがあった。"""
+    picture = Image.fromarray(image)
+    return np.asarray(picture.resize((picture.width * scale, picture.height * scale), Image.BICUBIC))
+
+
 def encode_png(image: np.ndarray) -> str:
     buffer = io.BytesIO()
     Image.fromarray(image).save(buffer, "PNG", compress_level=1)
@@ -158,6 +182,7 @@ class ClaudeReader:
     extra: dict = field(default_factory=dict)
 
     def __post_init__(self):
+        self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="read")
         if self.client is None:
             import anthropic
             self.client = anthropic.Anthropic(api_key=load_key(), timeout=self.timeout_s,
@@ -182,9 +207,32 @@ class ClaudeReader:
         return ReadResult(response_text(response), seconds, usd, model,
                           usage.input_tokens, usage.output_tokens)
 
-    def read_text(self, band: np.ndarray) -> ReadResult:
-        result = self.ask(band, PROMPT_TEXT, TEXT_MODEL, "text", thinking=NO_THINKING)
+    def _read_once(self, image: np.ndarray, purpose: str) -> ReadResult:
+        result = self.ask(image, PROMPT_TEXT, TEXT_MODEL, purpose, thinking=NO_THINKING)
         result.text = clean_text(result.text)
+        return result
+
+    def read_text(self, band: np.ndarray) -> ReadResult:
+        """本文を読む。そのままと拡大の2通りで同時に読み、割れたら Sonnet に決めてもらう。
+
+        Haiku は文の2%ほどで1字読み違えるが、どちらで間違えるかは文によって違う。
+        """
+        plain = self.pool.submit(self._read_once, band, "text")
+        large = self.pool.submit(self._read_once, enlarge(band), "text_large")
+        first, second = plain.result(), large.result()
+        usd = first.usd + second.usd
+        seconds = max(first.seconds, second.seconds)
+        if same_text(first.text, second.text):
+            result = first
+        else:
+            result = self.ask(band, PROMPT_TEXT, PICTURE_MODEL, "text_check", max_tokens=1000,
+                              extra_body=LOW_EFFORT)
+            result.text = clean_text(result.text)
+            usd += result.usd
+            seconds += result.seconds
+        result.usd, result.seconds = usd, seconds
+        if is_no_text(result.text):
+            result.text = ""
         return result
 
     def read_items(self, area: np.ndarray) -> tuple[list[str], ReadResult]:

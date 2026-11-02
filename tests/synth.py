@@ -301,7 +301,7 @@ def write_game(style: Style, folder: Path, voice_rule: str = "tag") -> Path:
         data["tag"] = {"kind": "hline", "y": style.tag_y, "x0": 36,
                        "x1": style.size[0] - 36, "min_cols": 600}
     else:
-        data["tag"] = {"kind": "glyph", "box": [170, 492, 420, 526], "min_cols": 30}
+        data["tag"] = {"kind": "glyph", "box": [170, 492, 420, 526], "min_glyphs": 30}
     path = folder / f"synth_{style.name}.json"
     path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     return path

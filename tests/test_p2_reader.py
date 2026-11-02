@@ -89,6 +89,49 @@ def test_space_after_question_mark_is_normalized():
     assert clean_text("えっ！？本当？」") == "えっ！？　本当？」"
 
 
+def test_no_text_answers_are_not_read(tmp_path):
+    for answer in ("なし", "画像内に読み取れる文字は確認できません。", "文字は見当たりません。", ""):
+        reader = fake_reader(tmp_path, [Block("text", answer)])
+        assert reader.read_text(np.zeros((10, 10, 3), np.uint8)).text == ""
+    reader = fake_reader(tmp_path, [Block("text", "そんなこと、確認できるわけがない。")])
+    assert reader.read_text(np.zeros((10, 10, 3), np.uint8)).text != ""
+
+
+class SequenceClient:
+    """呼ばれた順に違う字を返す。"""
+
+    def __init__(self, texts):
+        self.texts = list(texts)
+        self.models = []
+        self.messages = self
+
+    def create(self, **kwargs):
+        self.models.append(kwargs["model"])
+        return FakeResponse([Block("text", self.texts.pop(0))])
+
+
+def test_two_reads_that_agree_do_not_call_the_checker(tmp_path):
+    client = SequenceClient(["同じ文です。", "同じ文です。"])
+    reader = ClaudeReader(CostLog(tmp_path / "costs.jsonl"), client=client)
+    assert reader.read_text(np.zeros((10, 10, 3), np.uint8)).text == "同じ文です。"
+    assert client.models == ["claude-haiku-5-5", "claude-haiku-5-5"]
+
+
+def test_two_reads_that_differ_are_settled_by_sonnet(tmp_path):
+    client = SequenceClient(["一つ目の読み。", "二つ目の読み。", "正しい読み。"])
+    reader = ClaudeReader(CostLog(tmp_path / "costs.jsonl"), client=client)
+    assert reader.read_text(np.zeros((10, 10, 3), np.uint8)).text == "正しい読み。"
+    assert client.models[-1] == "claude-sonnet-5-5"
+
+
+def test_small_shape_differences_do_not_call_the_checker():
+    from sotozuke.reader import same_text
+    assert same_text("2年の教室。", "２年の教室。")
+    assert same_text("「探してる」と言った。", "『探してる』と言った。")
+    assert same_text("え？ 今？", "え？　今？")
+    assert not same_text("バッチリ", "パッチリ")
+
+
 def test_items_are_parsed_with_extra_words():
     assert parse_items('こちらです。\n["一つ目", "二つ目"]') == ["一つ目", "二つ目"]
     with pytest.raises(ReaderError):
@@ -108,7 +151,8 @@ def test_cost_is_logged_and_totaled(tmp_path):
     frame = np.zeros((10, 10, 3), np.uint8)
     result = reader.read_text(frame)
     assert result.text == "文です。"
-    assert reader.costs.total() == pytest.approx(cost_of("claude-haiku-5-5", 100, 20), abs=1e-6)
+    # そのままと拡大の2回読む
+    assert reader.costs.total() == pytest.approx(cost_of("claude-haiku-5-5", 100, 20) * 2, abs=1e-5)
 
 
 def test_budget_stops_calls(tmp_path):

@@ -45,6 +45,31 @@ def test_menu_move_reads_only_selection(game_path, style):
     assert sim.said("screen")[-1] == "項目2"
 
 
+def test_menu_over_a_moving_background_is_still_read(game_path, style):
+    """背景が動き続けて落ち着かない画面でも、入ったら読む。"""
+    sim = sim_for(game_path, style)
+    config = sim.config
+    rng = np.random.default_rng(3)
+    base = synth.render(style, synth.View(scene=1, hint=MENU_HINT))
+
+    def moving(step):
+        frame = base.copy()
+        h, w = frame.shape[:2]
+        for _ in range(12):
+            x = int(rng.integers(0, w - 40))
+            y = int(rng.integers(60, h - 200))
+            frame[y:y + 16, x:x + 16] = 255 if step % 2 else 0
+        return frame
+
+    for step in range(30):
+        sim.tasks.run_due()
+        sim.director.step(moving(step), sim.clock.now)
+        sim.clock.now += 0.1
+    assert sim.watcher.kind == "menu"
+    assert sim.said("screen")
+    assert config is sim.config
+
+
 def test_menu_screen_change_without_key_is_not_read(game_path, style):
     """利用者が動かしていない変化は読まない。"""
     sim = sim_for(game_path, style)
@@ -157,6 +182,27 @@ def test_backlog_screen_tag_is_ignored(game_path, style):
     sim.run(2.0)
     assert sim.watcher.kind == "backlog"
     assert not [r for r in sim.events("text_ready")]
+
+
+def test_loading_screen_is_silent(style, tmp_path):
+    import json
+    from PIL import Image
+    path = synth.write_game(style, tmp_path)
+    frame = synth.render(style, synth.View(scene=9, hint="読み込み中"))
+    x0, y0, x1, y1 = style.hint_box
+    Image.fromarray(frame[y0:y1, x0:x1]).save(tmp_path / "tpl_loading.png")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["screens"].append({"name": "読み込み", "kind": "loading", "box": list(style.hint_box),
+                            "template": "tpl_loading.png"})
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    sim = Sim(style, load_config(path))
+    sim.view = synth.View(scene=1, dark=1.0)
+    sim.run(1.0)
+    sim.view = synth.View(scene=9, hint="読み込み中")
+    sim.run(3.0)
+    assert sim.watcher.kind == "loading"
+    assert sim.said() == []
+    assert sim.reader.other_calls == 0
 
 
 def test_repeat_on_menu_rereads_selection(game_path, style):

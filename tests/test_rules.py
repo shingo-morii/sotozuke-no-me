@@ -128,6 +128,21 @@ def test_voice_rule_all_reads_everything(style, tmp_path):
     assert sim.said("sentence") == [S[0]]
 
 
+def test_dots_only_are_told_as_silence(game_path, style):
+    sim = sim_for(game_path, style)
+    show(sim, "………")
+    sim.run(2.0)
+    assert sim.said("sentence") == ["無言。"]
+
+
+def test_misread_dots_are_told_as_silence():
+    from sotozuke.director import speakable
+    assert speakable("ぉぉぉぉぉぉぉぉぉ") == "無言。"
+    assert speakable("○○○○○○○○") == "無言。"
+    assert speakable("………") == "無言。"
+    assert speakable("あああ、そうか。") == "あああ、そうか。"
+
+
 def test_repeat_reads_the_last_sentence_again(game_path, style):
     sim = sim_for(game_path, style)
     show(sim, S[0])

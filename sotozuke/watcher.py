@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -18,6 +19,11 @@ KIND_CONFIRM_FRAMES = 2
 SETTLE_FRAMES = 2
 SETTLE_CELL_DIFF = 25
 SETTLE_CELLS = 3
+FORCE_SETTLE_S = 1.2  # 背景が動き続ける画面でも、この時間で読む
+FORCE_JUDGE_S = 1.2   # キーのあと字の形が揺れて止まらなくても、この時間で文を判定する
+FORCE_AGAIN_S = 0.6
+RECENT_FRAMES = 3
+AGAIN_WITHOUT_KEY_S = 1.0  # キーなしで次の文と見なすには、これだけ止まっていること
 
 
 @dataclass
@@ -68,41 +74,87 @@ class TextTracker:
         self.judged = False
         self.last: np.ndarray | None = None
         self.emptied = False
+        self.recent: deque[np.ndarray] = deque(maxlen=RECENT_FRAMES)
+        self.key_pressed = False
+        self.force_at: float | None = None
+        self.fired_since_key = False
+        self.empty_frames = 0
 
     def on_key(self) -> None:
         """キーが押されたら、そこから止まるのを待ち直す。連打の途中の文を読まないため。"""
         self.reference = None
         self.judged = False
+        self.key_pressed = True
+        self.fired_since_key = False
 
     def feed(self, band_rgb: np.ndarray, t: float) -> bool:
         mask = glyph_mask(to_gray(band_rgb), self.glyph)
+        self.recent.append(mask)
+        if self.key_pressed:
+            self.key_pressed = False
+            self.force_at = t + FORCE_JUDGE_S
         if int(mask.sum()) < self.rule.min_pixels:
             self.reference = None
             self.judged = False
-            self.emptied = True
+            self.empty_frames += 1
+            if self.empty_frames >= 2:  # 1コマだけ字が薄れたときは空と見なさない
+                self.emptied = True
+            if self.force_at is not None and t >= self.force_at:
+                self.force_at = t + FORCE_AGAIN_S
             return False
+        self.empty_frames = 0
         if self.reference is None or self._changed(mask):
             self.reference = self.core = mask
             self.age = 0
             self.reference_t = t
             self.judged = False
-            return False
+            return self._forced(t)
         self.age += 1
         self.core = self.core & dilate(mask, 1)
-        if self.judged or t - self.reference_t < self.rule.stable_s:
-            return False
+        stable_s = self.rule.stable_s
+        if not self.rule.typed and self.fired_since_key:
+            stable_s = AGAIN_WITHOUT_KEY_S
+        if self.judged or t - self.reference_t < stable_s:
+            return self._forced(t)
         self.judged = True
-        return self._judge(mask if self.rule.typed else self.core)
+        final = mask if self.rule.typed else self.core
+        if int(final.sum()) < self.rule.min_pixels:
+            self.emptied = True  # 見続けて残らなかった点は背景のゆらぎ。字は無かった
+            return False
+        is_new = self._judge(final)
+        if is_new:
+            self.force_at = None  # キーの直後は古い文がまだ残っているので、見つけるまで保険を残す
+        return is_new
+
+    def _forced(self, t: float) -> bool:
+        """動く背景で字の形が止まらないときの保険。文はキーのあとにしか変わらないので、一度だけ判定する。"""
+        if self.rule.typed or self.force_at is None or t < self.force_at:
+            return False
+        # 字がキーから遅れて出ることもあるので、文が見つかるまで見直す
+        self.force_at = t + FORCE_AGAIN_S
+        self.judged = True
+        steady = np.logical_and.reduce(list(self.recent))
+        if int(steady.sum()) < self.rule.min_pixels:
+            return False
+        is_new = self._judge(steady)
+        if is_new:
+            self.force_at = None
+        return is_new
 
     def _judge(self, mask: np.ndarray) -> bool:
-        grown = 0.15 if self.rule.typed else 0.25
-        is_new = (self.last is None or self.emptied
-                  or overlap(mask, self.last) < self.rule.new_overlap
-                  # 左にそろえたゲームでは、前の文に字が足されただけの文もある
-                  or new_pixels(mask, self.last) > int(self.last.sum() * grown))
+        if not self.rule.typed and self.fired_since_key:
+            # キーなしで次の文と見なすのは、字がほとんど入れ替わったときだけ
+            is_new = self.emptied or overlap(mask, self.last) < 0.4
+        else:
+            grown = 0.15 if self.rule.typed else 0.25
+            is_new = (self.last is None or self.emptied
+                      or overlap(mask, self.last) < self.rule.new_overlap
+                      # 左にそろえたゲームでは、前の文に字が足されただけの文もある
+                      or new_pixels(mask, self.last) > int(self.last.sum() * grown))
         if is_new:
             self.last = mask
             self.emptied = False
+            self.fired_since_key = True
         return is_new
 
     def flush(self) -> bool:
@@ -125,7 +177,7 @@ class TextTracker:
         size = int(self.core.sum())
         kept = size - new_pixels(self.core, mask)
         # 見続けて残った点はほとんど消えない。同じ位置の短い文どうしも見分けられるよう高くする
-        limit = 0.8 if self.age >= 2 else 0.5
+        limit = 0.7 if self.age >= 2 else 0.5
         return kept < size * limit or new_pixels(mask, self.core) > max(1000, size)
 
 
@@ -225,15 +277,25 @@ def has_name_tag(frame: np.ndarray, config: GameConfig) -> bool:
     if tag is None:
         return False
     if tag.kind == "hline":
-        rows = to_gray(frame[tag.y - 3:tag.y + 4, tag.x0:tag.x1]).astype(np.int16)
-        line = rows[2:5].max(axis=0)
-        around = (rows[0] + rows[6]) / 2
-        return int((line - around >= tag.contrast).sum()) >= tag.min_cols
+        return _has_line(frame, tag)
     if tag.kind == "glyph":
-        # 名前の字が決まった位置に出るゲーム。min_cols は字の点の数
-        mask = glyph_mask(to_gray(crop(frame, tag.box)), config.glyph)
-        return int(mask.sum()) >= tag.min_cols
+        return _has_name_glyphs(frame, tag, config)
+    if tag.kind == "either":
+        # 線は明るい背景で消え、名前の字は短い名前で少なくなる。どちらかが見えれば札がある
+        return _has_line(frame, tag) or _has_name_glyphs(frame, tag, config)
     raise ValueError(f"札の見分け方が違います: {tag.kind}")
+
+
+def _has_line(frame: np.ndarray, tag) -> bool:
+    rows = to_gray(frame[tag.y - 3:tag.y + 4, tag.x0:tag.x1]).astype(np.int16)
+    line = rows[2:5].max(axis=0)
+    around = (rows[0] + rows[6]) / 2
+    return int((line - around >= tag.contrast).sum()) >= tag.min_cols
+
+
+def _has_name_glyphs(frame: np.ndarray, tag, config: GameConfig) -> bool:
+    mask = glyph_mask(to_gray(crop(frame, tag.box)), config.glyph)
+    return int(mask.sum()) >= tag.min_glyphs
 
 
 class Watcher:
@@ -251,9 +313,16 @@ class Watcher:
         self.settle_previous: np.ndarray | None = None
         self.settle_count = 0
         self.settled_sample: np.ndarray | None = None
+        self.force_at: float | None = None
+        self.expecting = False
 
     def on_key(self) -> None:
         self.text.on_key()
+        self.expecting = True
+
+    def expect_change(self) -> None:
+        """カーソルが動いたので、画面が落ち着かなくても読む。"""
+        self.expecting = True
 
     def feed(self, frame: np.ndarray, t: float) -> list:
         events: list = []
@@ -275,6 +344,7 @@ class Watcher:
                 self.screen = screen
                 self.settled_sample = None
                 self.settle_count = 0
+                self.expecting = True
         else:
             self.pending = "none"
             self.pending_count = 0
@@ -297,14 +367,21 @@ class Watcher:
     def _screen_settled(self, frame: np.ndarray, t: float) -> ScreenSettled | None:
         sample = small_gray(frame)
         previous, self.settle_previous = self.settle_previous, sample
-        if previous is None or _changed(sample, previous):
-            self.settle_count = 0
-            return None
-        self.settle_count += 1
-        if self.settle_count < SETTLE_FRAMES:
-            return None
-        if self.settled_sample is not None and not _changed(sample, self.settled_sample):
-            return None
+        if self.expecting:
+            self.expecting = False
+            self.force_at = t + FORCE_SETTLE_S
+        forced = self.force_at is not None and t >= self.force_at
+        if not forced:
+            if previous is None or _changed(sample, previous):
+                self.settle_count = 0
+                return None
+            self.settle_count += 1
+            if self.settle_count < SETTLE_FRAMES:
+                return None
+            if self.settled_sample is not None and not _changed(sample, self.settled_sample):
+                self.force_at = None  # 動かしても画面が変わらなかった
+                return None
+        self.force_at = None
         self.settled_sample = sample
         return ScreenSettled(t, self.kind, self.screen, frame)
 

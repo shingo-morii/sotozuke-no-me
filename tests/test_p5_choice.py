@@ -104,6 +104,31 @@ def test_move_before_items_are_ready_skips_intro(game_path, style):
     assert "選んでいるのは、二つ目の項目" in sim.said("choice")[-1]
 
 
+def test_one_frame_flicker_is_not_read(game_path, style):
+    """帯が動く途中の1コマの順位の揺れでは読まない。"""
+    sim = sim_for(game_path, style)
+    items = ["一つ目の項目", "二つ目の項目", "三つ目の項目"]
+    sim.view = choice_view(synth.View(scene=1), items, selected=0)
+    sim.run(5.0)
+    sim.view = choice_view(synth.View(scene=1), items, selected=2)
+    sim.run(0.1)
+    sim.view = choice_view(synth.View(scene=1), items, selected=1)
+    sim.run(0.5)
+    assert sim.said("choice")[1:] == ["二つ目の項目"]
+
+
+def test_nothing_is_read_after_deciding(game_path, style):
+    sim = sim_for(game_path, style)
+    items = ["一つ目の項目", "二つ目の項目"]
+    sim.view = choice_view(synth.View(scene=1), items, selected=0)
+    sim.run(5.0)
+    before = len(sim.said("choice"))
+    sim.press()
+    sim.view = choice_view(synth.View(scene=1), items, selected=1)
+    sim.run(0.5)
+    assert len(sim.said("choice")) == before
+
+
 def test_last_sentence_before_choice_is_read(game_path, style):
     """文が止まりきる前に選択肢が重なっても、文を読み落とさない。"""
     sim = sim_for(game_path, style)

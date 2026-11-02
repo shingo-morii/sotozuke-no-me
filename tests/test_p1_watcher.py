@@ -130,12 +130,53 @@ def test_moving_background_does_not_hide_sentences(style, tmp_path):
     t = 0.0
     ready = 0
     for text in texts:
+        watcher.on_key()
         frame = synth.render(style, synth.View(scene=1, text=text))
         for _ in range(12):
             ready += sum(isinstance(e, TextReady)
                          for e in watcher.feed(noisy(frame, config.text.band, rng, 0.002), t))
             t += 1 / FPS
     assert ready == len(texts)
+
+
+def test_unsteady_text_is_judged_after_key(style, tmp_path):
+    """字の形が大きく揺れて止まらなくても、キーのあとの文を見落とさない。1回だけ判定する。"""
+    path = synth.write_game(style, tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["text"]["typed"] = False
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    config = load_config(path)
+    watcher = Watcher(config)
+    rng = np.random.default_rng(1)
+    frame = synth.render(style, synth.View(scene=1, text=timeline.SAMPLE_SENTENCES[0]))
+    next_frame = synth.render(style, synth.View(scene=1, text=timeline.SAMPLE_SENTENCES[5]))
+    frame_without_text = synth.render(style, synth.View(scene=1))
+    t = 0.0
+    ready = []
+    for _ in range(8):
+        ready += [e for e in watcher.feed(frame, t) if isinstance(e, TextReady)]
+        t += 0.1
+    assert len(ready) == 1
+    watcher.on_key()
+
+    def shaken():
+        # 字の一部を毎回違う形で隠し、見続けて残る点を減らす
+        out = next_frame.copy()
+        x0, y0, x1, y1 = config.text.band
+        for _ in range(30):
+            x = int(rng.integers(x0, x1 - 30))
+            y = int(rng.integers(y0, y1 - 12))
+            out[y:y + 12, x:x + 30] = out[y:y + 12, x:x + 30] // 2 + 60
+        return out
+
+    # 字はキーから遅れて出る
+    for _ in range(18):
+        ready += [e for e in watcher.feed(frame_without_text, t) if isinstance(e, TextReady)]
+        t += 0.1
+    for _ in range(18):
+        ready += [e for e in watcher.feed(shaken(), t) if isinstance(e, TextReady)]
+        t += 0.1
+    assert len(ready) == 2
 
 
 def test_gate_dawn_not_missed(style, game_path):

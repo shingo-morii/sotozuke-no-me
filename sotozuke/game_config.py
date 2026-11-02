@@ -17,6 +17,7 @@ SCREEN_KINDS = (
     "confirm",      # 確認の窓
     "card",         # 字だけを読む札（日付など）
     "backlog",      # 文字の履歴
+    "loading",      # 読み込みの画面。何も読まない
 )
 
 
@@ -55,13 +56,14 @@ class TextRule:
 @dataclass(frozen=True)
 class TagRule:
     """名前の札の見分け方。"""
-    kind: str = "hline"          # 横の線
+    kind: str = "hline"          # hline は横の線、glyph は名前の字の形、either はどちらか
     y: int = 0
     x0: int = 0
     x1: int = 0
     min_cols: int = 0
     contrast: int = 25
     box: Box | None = None       # 札の字の位置を字の形で見るとき
+    min_glyphs: int = 0          # 札の字の点の数がこれ以上なら札がある
 
 
 @dataclass(frozen=True)
