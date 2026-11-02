@@ -127,6 +127,7 @@ class GameConfig:
     next_marker: Box | None
     advance_keys: tuple[str, ...]
     cursor_keys: tuple[str, ...]
+    audio_threshold: float = 0.05   # 音で見るとき、声と見なす針の値。背景の音楽より大きくする
     source: Path | None = None
 
 
@@ -200,6 +201,7 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
             next_marker=_box(marker, "next_marker", size) if marker else None,
             advance_keys=tuple(data.get("keys", {}).get("advance", ["enter"])),
             cursor_keys=tuple(data.get("keys", {}).get("cursor", ["up", "down"])),
+            audio_threshold=float(data.get("audio_threshold", 0.05)),
         )
     except KeyError as exc:
         raise ConfigError(f"設定の項目がありません: {exc}") from exc

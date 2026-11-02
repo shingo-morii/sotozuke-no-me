@@ -114,6 +114,21 @@ def test_gate_stop_within_limit():
         player.close()
 
 
+def test_voice_needs_a_lasting_sound():
+    """短い音は声と見なさない。続けて大きい音が鳴れば声と見なす。"""
+    from sotozuke.game_audio import GameAudioMonitor
+    monitor = GameAudioMonitor(threshold=0.05, min_active_s=0.3, window_s=1.0)
+    now = time.monotonic()
+    monitor.samples.extend((now - 0.5 + i * 0.03, 0.1) for i in range(3))
+    assert not monitor.voice_playing()
+    monitor.samples.clear()
+    monitor.samples.extend((now - 0.6 + i * 0.03, 0.1) for i in range(20))
+    assert monitor.voice_playing()
+    monitor.samples.clear()
+    monitor.samples.extend((now - 0.6 + i * 0.03, 0.02) for i in range(20))
+    assert not monitor.voice_playing()  # 背景の音楽の大きさ
+
+
 @pytest.mark.audio
 def test_finish_callback_and_replace():
     player = Player()

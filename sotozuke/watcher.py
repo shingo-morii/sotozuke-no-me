@@ -126,6 +126,12 @@ class TextTracker:
             self.force_at = None  # キーの直後は古い文がまだ残っているので、見つけるまで保険を残す
         return is_new
 
+    def shows_last(self) -> bool:
+        """今の字が、最後に新しい文と判定した字と同じか。"""
+        if self.last is None or self.reference is None or self.core is None:
+            return False
+        return int(self.core.sum()) >= self.rule.min_pixels and overlap(self.core, self.last) >= self.rule.new_overlap
+
     def _forced(self, t: float) -> bool:
         """動く背景で字の形が止まらないときの保険。文はキーのあとにしか変わらないので、一度だけ判定する。"""
         if self.rule.typed or self.force_at is None or t < self.force_at:
@@ -322,6 +328,12 @@ class Watcher:
 
     def expect_change(self) -> None:
         """カーソルが動いたので、画面が落ち着かなくても読む。"""
+        self.expecting = True
+
+    def settle_again(self) -> None:
+        """読めなかったので、画面が変わっていなくてももう一度知らせる。"""
+        self.settled_sample = None
+        self.settle_count = 0
         self.expecting = True
 
     def feed(self, frame: np.ndarray, t: float) -> list:

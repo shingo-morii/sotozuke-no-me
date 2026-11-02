@@ -18,13 +18,9 @@ import comtypes
 from PIL import Image
 
 from ingest.gamectl import Control
-from sotozuke.game_audio import open_game_meters
+from sotozuke.game_audio import open_output_meter
 from sotozuke.game_config import load_config
 from sotozuke.watcher import has_name_tag
-
-
-def peak(meters) -> float:
-    return max((m.GetPeakValue() for m in meters), default=0.0)
 
 
 def main(argv=None) -> int:
@@ -43,14 +39,14 @@ def main(argv=None) -> int:
     folder = Path(options.work) / "voice"
     folder.mkdir(parents=True, exist_ok=True)
     rows = []
+    meter = open_output_meter()
     for i in range(options.count):
         before = time.time()
         control.key(options.key)
         levels = []
-        meters = open_game_meters(options.process)
         end = time.perf_counter() + options.seconds
         while time.perf_counter() < end:
-            levels.append(round(peak(meters), 3))
+            levels.append(round(meter.GetPeakValue(), 3))
             time.sleep(0.05)
         frame = control.capture.grab()
         after = time.time()

@@ -212,7 +212,7 @@ class ClaudeReader:
         result.text = clean_text(result.text)
         return result
 
-    def read_text(self, band: np.ndarray) -> ReadResult:
+    def read_text(self, band: np.ndarray, on_check=None) -> ReadResult:
         """本文を読む。そのままと拡大の2通りで同時に読み、割れたら Sonnet に決めてもらう。
 
         Haiku は文の2%ほどで1字読み違えるが、どちらで間違えるかは文によって違う。
@@ -225,6 +225,8 @@ class ClaudeReader:
         if same_text(first.text, second.text):
             result = first
         else:
+            if on_check:
+                on_check()  # 読みが割れたので時間がかかると知らせる
             result = self.ask(band, PROMPT_TEXT, PICTURE_MODEL, "text_check", max_tokens=1000,
                               extra_body=LOW_EFFORT)
             result.text = clean_text(result.text)

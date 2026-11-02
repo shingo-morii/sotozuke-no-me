@@ -18,12 +18,16 @@ from . import reader as prompts
 from .game_config import GameConfig, ScreenRule
 from .image_ops import crop, fingerprint, small_gray, to_gray
 from .inputs import Command
-from .watcher import KindChanged, SceneDawn, ScreenSettled, TEXT_KIND, TextReady, Watcher
+from .watcher import (KindChanged, SceneDawn, ScreenSettled, TEXT_KIND, TextReady, Watcher,
+                      has_name_tag)
 
 FAIL_AFTER_S = 3.0        # これだけ待っても読めなければ短い音で知らせる
 DESCRIPTION_HOLD_S = 3.0  # 説明を待って文を止めておく長さ
 SAME_PICTURE_DIFF = 10.0  # 粗い絵の差がこれ未満なら同じ絵
 KEY_RECENT_S = 1.5        # キーのあとこの間に落ち着いた画面の変化は、利用者が動かしたものと見なす
+CHECKING_EXTRA_S = 1.5    # 読み手が確認に入ったら、知らせる音をこれだけ待つ
+TAG_RECHECK_S = 0.35      # 声ありと判定した文は、前の文の札が残っていただけかをこのあと見直す
+SAME_AGAIN_S = 1.6        # キーのあとこの時間たっても字が同じなら、同じ文がまた出たと見なす
 
 
 class Tasks(Protocol):
@@ -126,6 +130,8 @@ class Director:
         self.choice: ChoiceSession | None = None
         self.screen: ScreenState | None = None
         self.last_key_t = -100.0
+        self.tag_recheck_at: float | None = None
+        self.same_check_at: float | None = None
         self.text_since_scene = True
         self.after_speech: Callable[[], None] | None = None
         self.screen_cache: dict[tuple[str, bool, str], tuple[str, str, np.ndarray]] = {}
@@ -146,10 +152,18 @@ class Director:
                 self._on_settled(event)
         if self.choice and self.choice.ready:
             self._track_choice(frame)
+        self._recheck_tag(frame)
         self.tick()
 
     def tick(self) -> None:
         now = self.s.clock()
+        if self.same_check_at is not None and now >= self.same_check_at:
+            self.same_check_at = None
+            if (self.spoken and self.watcher.kind == TEXT_KIND and self.watcher.text.shows_last()
+                    and self.pending is None):
+                # 同じ文が続けて出ると字の形では見分けられない。キーで進んだのに同じ字なら読み直す
+                self.s.log("same_again", text=self.spoken[0])
+                self._say(self.spoken[0], self.spoken[1], "sentence")
         if self.pending and not self.pending.failed and now >= self.pending.deadline:
             self.pending.failed = True
             self.s.log("fail", reason="timeout")
@@ -176,12 +190,16 @@ class Director:
     def _on_text(self, event: TextReady) -> None:
         self.band = event.band
         self.spoken = None
+        self.same_check_at = None
         self.text_since_scene = True
         voiced = self._is_voiced(event)
         self.s.log("text_ready", voiced=voiced)
         scene = self.scene
+        self.tag_recheck_at = None
         if voiced:
             self._next_generation()
+            if self.config.voice_rule == "tag":
+                self.tag_recheck_at = self.s.clock() + TAG_RECHECK_S
             if self.speaking == "sentence":
                 self._stop_sound()
             if scene and scene.state == "speaking":
@@ -192,15 +210,20 @@ class Director:
             elif scene and scene.state == "generating":
                 scene.auto = False
             return
+        self._read_sentence(event.band)
+
+    def _read_sentence(self, band: np.ndarray) -> None:
         generation = self._next_generation()
         if self.speaking == "sentence":
             self._stop_sound()
         self.after_speech = None
         self.pending = Pending(generation, self.s.clock() + FAIL_AFTER_S)
-        band = event.band
+
+        def checking():
+            self.s.tasks.post(lambda: self._extend_deadline(generation))
 
         def work():
-            result = self.s.reader.read_text(band)
+            result = self.s.reader.read_text(band, on_check=checking)
             if not result.text:
                 return None
             text = speakable(result.text)
@@ -208,6 +231,21 @@ class Director:
 
         self.s.log("read_start", generation=generation)
         self.s.tasks.submit(work, lambda value, error: self._on_sentence(generation, value, error))
+
+    def _extend_deadline(self, generation: int) -> None:
+        if self.pending and self.pending.generation == generation:
+            self.pending.deadline += CHECKING_EXTRA_S
+
+    def _recheck_tag(self, frame: np.ndarray) -> None:
+        """札は前の文から少し残ることがある。消えていたら声の無い文なので読む。"""
+        if self.tag_recheck_at is None or self.s.clock() < self.tag_recheck_at:
+            return
+        self.tag_recheck_at = None
+        if self.watcher.kind != TEXT_KIND or has_name_tag(frame, self.config):
+            return
+        self.s.log("tag_gone")
+        self.band = crop(frame, self.config.text.band).copy()
+        self._read_sentence(self.band)
 
     def _is_voiced(self, event: TextReady) -> bool:
         rule = self.config.voice_rule
@@ -318,6 +356,7 @@ class Director:
 
     def _on_kind(self, event: KindChanged) -> None:
         self.s.log("kind", old=event.old, new=event.new)
+        self.same_check_at = None
         self.choice = None
         self.screen = None
         if event.new == "choice":
@@ -464,6 +503,9 @@ class Director:
 
         def done(value, error):
             if value is None:
+                if first:
+                    state.entered = False  # 読めなかったので、次も入った直後として読む
+                    self.watcher.settle_again()
                 self._on_screen_text(generation, None, error)
                 return
             text, new_title, audio = value
@@ -482,14 +524,16 @@ class Director:
             data, _ = reader.read_menu(frame)
             new_title = str(data.get("title", ""))
             selected = str(data.get("selected", ""))
+            if not new_title and not selected:
+                return "", title  # 画面が動いている途中で読めなかった
             if first or new_title != title:
                 return f"{new_title}。{selected}", new_title
             return selected, new_title
         if kind == "confirm":
             data, _ = reader.read_confirm(frame)
             selected = str(data.get("selected", ""))
-            message = str(data.get("message", ""))
-            sep = "" if message.endswith(("。", "？", "！")) else "。"
+            message = prompts.clean_text(str(data.get("message", "")))
+            sep = "" if message.endswith(("。", "？", "！", "?", "!")) else "。"
             return (f"{message}{sep}{selected}" if first else selected), message
         if kind == "map":
             prompt = screen.prompt if first else screen.prompt_move
@@ -507,6 +551,8 @@ class Director:
         """押した瞬間に読み上げを止める。作っている途中の結果は鳴らさない。"""
         self.watcher.on_key()
         self.last_key_t = self.s.clock()
+        self.tag_recheck_at = None
+        self.same_check_at = self.s.clock() + SAME_AGAIN_S
         if self.choice:
             self.choice.closing = True  # 決定のあとの動きは読まない
         self._next_generation()

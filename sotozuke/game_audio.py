@@ -1,69 +1,31 @@
 """ゲームの音の大きさを見る。音声そのものは録らず、音量の針だけを読む。
 
-Windows の音声のセッションごとの針（IAudioMeterInformation）を使う。ゲームのプロセスの音だけが分かるので、
-読み上げの声が混ざらない。声の見分けで「音で見る」ゲームに使う。
+声の見分けで「音で見る」ゲームに使う。プロセスごとの針は試した PC で値が0のままだったので、
+出力の装置全体の針を読む。自分の読み上げが鳴っている間は数えない。
+NVDA など別のアプリの音は混ざる。
 """
 from __future__ import annotations
 
 import threading
 import time
 from collections import deque
+from ctypes import POINTER, c_float, c_int, c_void_p
+from ctypes.wintypes import DWORD
+from typing import Callable
 
 import comtypes
 from comtypes import COMMETHOD, GUID, HRESULT, IUnknown
-from ctypes import POINTER, c_float, c_int, c_void_p
-from ctypes.wintypes import DWORD, LPCWSTR
-
-from .capture import process_name
 
 CLSID_DEVICE_ENUMERATOR = GUID("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
+CLSCTX_ALL = 23
+E_RENDER = 0
+E_MULTIMEDIA = 1
 
 
 class IAudioMeterInformation(IUnknown):
     _iid_ = GUID("{C02216F6-8C67-4B5B-9D00-D008E73E0064}")
     _methods_ = [
         COMMETHOD([], HRESULT, "GetPeakValue", (["out"], POINTER(c_float), "peak")),
-    ]
-
-
-class IAudioSessionControl2(IUnknown):
-    _iid_ = GUID("{BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D}")
-    _methods_ = [
-        COMMETHOD([], HRESULT, "GetState", (["out"], POINTER(c_int), "state")),
-        COMMETHOD([], HRESULT, "GetDisplayName", (["out"], POINTER(c_void_p), "name")),
-        COMMETHOD([], HRESULT, "SetDisplayName", (["in"], LPCWSTR, "name"), (["in"], c_void_p, "ctx")),
-        COMMETHOD([], HRESULT, "GetIconPath", (["out"], POINTER(c_void_p), "path")),
-        COMMETHOD([], HRESULT, "SetIconPath", (["in"], LPCWSTR, "path"), (["in"], c_void_p, "ctx")),
-        COMMETHOD([], HRESULT, "GetGroupingParam", (["out"], POINTER(GUID), "group")),
-        COMMETHOD([], HRESULT, "SetGroupingParam", (["in"], POINTER(GUID), "group"), (["in"], c_void_p, "ctx")),
-        COMMETHOD([], HRESULT, "RegisterAudioSessionNotification", (["in"], c_void_p, "client")),
-        COMMETHOD([], HRESULT, "UnregisterAudioSessionNotification", (["in"], c_void_p, "client")),
-        COMMETHOD([], HRESULT, "GetSessionIdentifier", (["out"], POINTER(c_void_p), "value")),
-        COMMETHOD([], HRESULT, "GetSessionInstanceIdentifier", (["out"], POINTER(c_void_p), "value")),
-        COMMETHOD([], HRESULT, "GetProcessId", (["out"], POINTER(DWORD), "pid")),
-        COMMETHOD([], HRESULT, "IsSystemSoundsSession"),
-        COMMETHOD([], HRESULT, "SetDuckingPreference", (["in"], c_int, "opt_out")),
-    ]
-
-
-class IAudioSessionEnumerator(IUnknown):
-    _iid_ = GUID("{E2F5BB11-0570-40CA-ACDD-3AA01277DEE8}")
-    _methods_ = [
-        COMMETHOD([], HRESULT, "GetCount", (["out"], POINTER(c_int), "count")),
-        COMMETHOD([], HRESULT, "GetSession", (["in"], c_int, "index"),
-                  (["out"], POINTER(POINTER(IUnknown)), "session")),
-    ]
-
-
-class IAudioSessionManager2(IUnknown):
-    _iid_ = GUID("{77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F}")
-    _methods_ = [
-        COMMETHOD([], HRESULT, "GetAudioSessionControl", (["in"], c_void_p, "guid"),
-                  (["in"], DWORD, "flags"), (["out"], POINTER(c_void_p), "control")),
-        COMMETHOD([], HRESULT, "GetSimpleAudioVolume", (["in"], c_void_p, "guid"),
-                  (["in"], DWORD, "flags"), (["out"], POINTER(c_void_p), "volume")),
-        COMMETHOD([], HRESULT, "GetSessionEnumerator",
-                  (["out"], POINTER(POINTER(IAudioSessionEnumerator)), "enumerator")),
     ]
 
 
@@ -85,24 +47,12 @@ class IMMDeviceEnumerator(IUnknown):
     ]
 
 
-CLSCTX_ALL = 23
-E_RENDER = 0
-E_MULTIMEDIA = 1
-
-
-def open_game_meters(process: str) -> list:
-    """ゲームのプロセスの音の針の一覧を返す。ゲームが音を出す前は空のことがある。"""
+def open_output_meter():
+    """既定の出力の装置の音量の針を開く。呼ぶ流れで CoInitialize しておく。"""
     enumerator = comtypes.CoCreateInstance(CLSID_DEVICE_ENUMERATOR, IMMDeviceEnumerator, CLSCTX_ALL)
     device = enumerator.GetDefaultAudioEndpoint(E_RENDER, E_MULTIMEDIA)
-    manager = device.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None).QueryInterface(IAudioSessionManager2)
-    sessions = manager.GetSessionEnumerator()
-    meters = []
-    for i in range(sessions.GetCount()):
-        session = sessions.GetSession(i)
-        control = session.QueryInterface(IAudioSessionControl2)
-        if process_name(control.GetProcessId()).lower() == process.lower():
-            meters.append(session.QueryInterface(IAudioMeterInformation))
-    return meters
+    unknown = device.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None)
+    return unknown.QueryInterface(IAudioMeterInformation)
 
 
 class GameAudioMonitor:
@@ -112,13 +62,13 @@ class GameAudioMonitor:
     短い音だけでは声と見なさない。
     """
 
-    def __init__(self, process: str, threshold: float = 0.05, min_active_s: float = 0.3,
-                 window_s: float = 1.0, interval_s: float = 0.03):
-        self.process = process
+    def __init__(self, threshold: float = 0.05, min_active_s: float = 0.3, window_s: float = 1.0,
+                 interval_s: float = 0.03, is_own_sound: Callable[[], bool] = lambda: False):
         self.threshold = threshold
         self.min_active_s = min_active_s
         self.window_s = window_s
         self.interval_s = interval_s
+        self.is_own_sound = is_own_sound
         self.samples: deque[tuple[float, float]] = deque(maxlen=400)
         self._running = False
         self._thread: threading.Thread | None = None
@@ -135,21 +85,10 @@ class GameAudioMonitor:
 
     def _loop(self) -> None:
         comtypes.CoInitialize()
-        meters: list = []
-        next_open = 0.0
+        meter = open_output_meter()
         while self._running:
-            now = time.monotonic()
-            if not meters and now >= next_open:
-                try:
-                    meters = open_game_meters(self.process)
-                except OSError:
-                    meters = []
-                next_open = now + 2.0
-            try:
-                level = max((m.GetPeakValue() for m in meters), default=0.0)
-                self.samples.append((now, float(level)))
-            except OSError:
-                meters = []
+            level = 0.0 if self.is_own_sound() else float(meter.GetPeakValue())
+            self.samples.append((time.monotonic(), level))
             time.sleep(self.interval_s)
 
     def recent(self, seconds: float) -> list[tuple[float, float]]:
@@ -161,4 +100,3 @@ class GameAudioMonitor:
         if len(active) < 2:
             return False
         return active[-1] - active[0] >= self.min_active_s
-

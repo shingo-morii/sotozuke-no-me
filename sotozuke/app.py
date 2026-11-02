@@ -92,7 +92,10 @@ class App:
         self.player = Player()
         self.cache = VoiceCache(build_voice(args), Path(args.cache))
         self.capture = WindowCapture(config.process)
-        self.audio = GameAudioMonitor(config.process) if config.voice_rule == "audio" else None
+        self.audio = None
+        if config.voice_rule == "audio":
+            self.audio = GameAudioMonitor(threshold=config.audio_threshold,
+                                          is_own_sound=lambda: self.player.playing)
         reader = ClaudeReader(CostLog(Path(args.costs), limit_usd=args.budget))
         self.services = Services(
             reader=reader, speech=self.speech, sound=self.player, tasks=self.tasks,

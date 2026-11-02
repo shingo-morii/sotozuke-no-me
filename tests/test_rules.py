@@ -111,6 +111,37 @@ def test_slower_presses_never_play_old_sentences(game_path, style, interval):
             assert S.index(later[0]["text"]) > 0
 
 
+def test_same_sentence_again_after_key_is_read_again(game_path, style):
+    """同じ文が続けて出ても読む。読み手は呼ばない。"""
+    sim = sim_for(game_path, style)
+    show(sim, S[0])
+    sim.run(3.5)
+    sim.press()
+    sim.run(3.0)
+    assert sim.said("sentence") == [S[0], S[0]]
+    assert sim.reader.text_calls == 1
+
+
+def test_no_second_reading_when_the_text_changes(game_path, style):
+    sim = sim_for(game_path, style)
+    show(sim, S[0])
+    sim.run(3.5)
+    sim.press()
+    show(sim, S[1])
+    sim.run(3.5)
+    assert sim.said("sentence") == [S[0], S[1]]
+
+
+def test_no_second_reading_when_the_screen_goes_blank(game_path, style):
+    sim = sim_for(game_path, style)
+    show(sim, S[0])
+    sim.run(3.5)
+    sim.press()
+    sim.view = synth.View(scene=1)
+    sim.run(3.0)
+    assert sim.said("sentence") == [S[0]]
+
+
 def test_voiced_line_is_not_read(game_path, style):
     sim = sim_for(game_path, style)
     show(sim, S[0], name="名前")
@@ -118,6 +149,28 @@ def test_voiced_line_is_not_read(game_path, style):
     assert sim.reader.text_calls == 0
     assert sim.said() == []
     assert sim.events("text_ready")[0]["voiced"] is True
+
+
+def test_leftover_tag_does_not_hide_a_sentence(game_path, style):
+    """前の文の札が少し残っていても、消えたら声の無い文として読む。"""
+    sim = sim_for(game_path, style)
+    show(sim, S[0], name="名前")
+    sim.run(2.0)
+    sim.press()
+    show(sim, S[1], name="名前")  # 字は変わったが札はまだ残っている
+    sim.run(0.5)
+    show(sim, S[1])              # 札が消えた
+    sim.run(3.0)
+    assert sim.said("sentence") == [S[1]]
+    assert sim.events("tag_gone")
+
+
+def test_real_voiced_line_stays_silent_after_recheck(game_path, style):
+    sim = sim_for(game_path, style)
+    show(sim, S[0], name="名前")
+    sim.run(3.0)
+    assert sim.said() == []
+    assert sim.events("tag_gone") == []
 
 
 def test_voice_rule_all_reads_everything(style, tmp_path):
@@ -179,6 +232,16 @@ def test_failure_gives_a_short_tone_after_three_seconds(game_path, style):
     tones = sim.events("tone")
     assert [t["name"] for t in tones] == ["fail"]
     assert 3.2 <= tones[0]["t"] <= 3.6  # 文が止まって0.3秒、そこから3秒
+
+
+def test_checking_gives_the_reader_more_time(game_path, style):
+    """読みが割れて確認している間は、3秒を少し超えても音を鳴らさない。"""
+    sim = sim_for(game_path, style, read_delay=3.5)
+    sim.reader.checking = True
+    show(sim, S[0])
+    sim.run(4.5)
+    assert sim.events("tone") == []
+    assert sim.said("sentence") == [S[0]]
 
 
 def test_error_gives_a_tone_and_repeat_retries(game_path, style):

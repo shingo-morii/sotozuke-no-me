@@ -99,15 +99,18 @@ class FakeReader:
         self.truth_text: Callable[[], str] = lambda: ""
         self.truth_items: Callable[[], list[str]] = lambda: []
         self.fail_next = 0
+        self.checking = False
 
     def _check(self):
         if self.fail_next:
             self.fail_next -= 1
             raise RuntimeError("読み手の失敗の模擬")
 
-    def read_text(self, band) -> FakeResult:
+    def read_text(self, band, on_check=None) -> FakeResult:
         self.text_calls += 1
         self._check()
+        if self.checking and on_check:
+            on_check()
         return FakeResult(self.truth_text())
 
     def read_items(self, area):

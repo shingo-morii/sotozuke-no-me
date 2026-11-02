@@ -35,6 +35,16 @@ def test_menu_first_entry_reads_title_and_selection(game_path, style):
     assert sim.said("screen") == ["メニュー。項目1"]
 
 
+def test_empty_menu_answer_is_not_spoken(game_path, style, monkeypatch):
+    """画面が動いている途中で読めなかったら、何も言わず読み直す。"""
+    sim = sim_for(game_path, style)
+    answers = [({"title": "", "selected": ""}, None), ({"title": "メニュー", "selected": "セーブ"}, None)]
+    monkeypatch.setattr(sim.reader, "read_menu", lambda frame: answers.pop(0))
+    sim.view = menu_view(0)
+    sim.run(4.0)
+    assert sim.said("screen") == ["メニュー。セーブ"]
+
+
 def test_menu_move_reads_only_selection(game_path, style):
     sim = sim_for(game_path, style)
     sim.view = menu_view(0)
