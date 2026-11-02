@@ -128,4 +128,6 @@ def test_gate_twenty_screens_exact():
         if result.text != text:
             wrong.append((text, result.text))
     print(f"20枚 中央値 {statistics.median(times):.2f}秒 最大 {max(times):.2f}秒 費用 {usd:.5f}ドル")
+    for truth, got in wrong:
+        print(f"違い 正解={truth} 読み={got}")
     assert not wrong
