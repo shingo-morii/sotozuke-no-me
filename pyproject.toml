@@ -1,0 +1,27 @@
+[project]
+name = "sotozuke"
+version = "0.1.0"
+description = "全盲の人が市販のノベルゲームを自分の手で遊ぶための外付けの目"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "pillow",
+    "anthropic",
+    "mss",
+    "sounddevice",
+    "soundfile",
+    "pywin32",
+    "comtypes",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "api: Anthropic の API を呼ぶテスト",
+    "local: 手元の実画面を使うテスト。公開しない",
+    "audio: 実際の音声の出力を使うテスト",
+]
+addopts = "-q"
