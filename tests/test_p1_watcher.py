@@ -1,6 +1,7 @@
 """P1 の関門。文の見落とし0、余分は1割以内、暗転の明けの見落とし0、1コマ5ミリ秒以内。"""
 from __future__ import annotations
 
+import json
 import statistics
 import time
 
@@ -102,6 +103,39 @@ def test_key_restarts_the_wait(style, game_path):
         ready += sum(isinstance(e, TextReady) for e in watcher.feed(frame, t))
         t += 1 / FPS
     assert ready == 1
+
+
+def noisy(frame: np.ndarray, band, rng, ratio: float) -> np.ndarray:
+    """動く背景の字の形のノイズの代わりに、本文の帯へ明るい点と暗い点を散らす。"""
+    out = frame.copy()
+    x0, y0, x1, y1 = band
+    count = int((x1 - x0) * (y1 - y0) * ratio)
+    xs = rng.integers(x0 + 2, x1 - 2, count)
+    ys = rng.integers(y0 + 2, y1 - 2, count)
+    out[ys, xs] = 255
+    out[ys + 1, xs] = 0
+    return out
+
+
+def test_moving_background_does_not_hide_sentences(style, tmp_path):
+    """文字が一度に出るゲームでは、背景が動いて字の形が揺れても文を見落とさない。"""
+    path = synth.write_game(style, tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["text"]["typed"] = False
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    config = load_config(path)
+    watcher = Watcher(config)
+    rng = np.random.default_rng(5)
+    texts = [timeline.SAMPLE_SENTENCES[0], "うん", timeline.SAMPLE_SENTENCES[1] * 2, "はい。", "そう。"]
+    t = 0.0
+    ready = 0
+    for text in texts:
+        frame = synth.render(style, synth.View(scene=1, text=text))
+        for _ in range(12):
+            ready += sum(isinstance(e, TextReady)
+                         for e in watcher.feed(noisy(frame, config.text.band, rng, 0.002), t))
+            t += 1 / FPS
+    assert ready == len(texts)
 
 
 def test_gate_dawn_not_missed(style, game_path):

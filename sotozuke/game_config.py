@@ -46,8 +46,10 @@ class TextRule:
     band: Box
     stable_s: float = 0.3
     new_overlap: float = 0.7     # 前の文との重なりがこれ未満なら新しい文
-    still_overlap: float = 0.93  # 同じ字が続いていると見なす重なり
+    # 文字の出方。True は1字ずつ出るゲーム。False は一度に出るゲームで、背景が動いても字の形の揺れに強い見方をする
+    typed: bool = True
     min_pixels: int = 40         # これより字の点が少なければ空
+    ignore: tuple[str, ...] = ()  # 本文の帯に出ても読まない字（読み込みの案内など）
 
 
 @dataclass(frozen=True)
@@ -142,6 +144,7 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
 
         glyph = GlyphRule(**data.get("glyph", {}))
         text_raw = dict(data["text"])
+        text_raw["ignore"] = tuple(text_raw.get("ignore", ()))
         text = TextRule(band=_box(text_raw.pop("band"), "text.band", size), **text_raw)
 
         tag = None

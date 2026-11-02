@@ -62,6 +62,8 @@ class TextTracker:
         self.rule = config.text
         self.glyph = config.glyph
         self.reference: np.ndarray | None = None
+        self.core: np.ndarray | None = None
+        self.age = 0
         self.reference_t = 0.0
         self.judged = False
         self.last: np.ndarray | None = None
@@ -74,24 +76,30 @@ class TextTracker:
 
     def feed(self, band_rgb: np.ndarray, t: float) -> bool:
         mask = glyph_mask(to_gray(band_rgb), self.glyph)
-        count = int(mask.sum())
-        if count < self.rule.min_pixels:
+        if int(mask.sum()) < self.rule.min_pixels:
             self.reference = None
             self.judged = False
             self.emptied = True
             return False
-        if self.reference is None or not self._still(mask):
-            self.reference = mask
+        if self.reference is None or self._changed(mask):
+            self.reference = self.core = mask
+            self.age = 0
             self.reference_t = t
             self.judged = False
             return False
+        self.age += 1
+        self.core = self.core & dilate(mask, 1)
         if self.judged or t - self.reference_t < self.rule.stable_s:
             return False
         self.judged = True
+        return self._judge(mask if self.rule.typed else self.core)
+
+    def _judge(self, mask: np.ndarray) -> bool:
+        grown = 0.15 if self.rule.typed else 0.25
         is_new = (self.last is None or self.emptied
                   or overlap(mask, self.last) < self.rule.new_overlap
                   # 左にそろえたゲームでは、前の文に字が足されただけの文もある
-                  or new_pixels(mask, self.last) > int(self.last.sum() * 0.15))
+                  or new_pixels(mask, self.last) > int(self.last.sum() * grown))
         if is_new:
             self.last = mask
             self.emptied = False
@@ -102,19 +110,23 @@ class TextTracker:
         if self.reference is None or self.judged:
             return False
         self.judged = True
-        mask = self.reference
-        is_new = (self.last is None or self.emptied
-                  or overlap(mask, self.last) < self.rule.new_overlap
-                  or new_pixels(mask, self.last) > int(self.last.sum() * 0.15))
-        if is_new:
-            self.last = mask
-            self.emptied = False
-        return is_new
+        return self._judge(self.core)
 
-    def _still(self, mask: np.ndarray) -> bool:
-        added = new_pixels(mask, self.reference)
-        allowed = max(30, int(self.reference.sum() * 0.02))
-        return added <= allowed
+    def _changed(self, mask: np.ndarray) -> bool:
+        if self.rule.typed:
+            size = int(self.reference.sum())
+            added = new_pixels(mask, self.reference)
+            kept = size - new_pixels(self.reference, mask)
+            return added > max(30, int(size * 0.02)) or kept < size * 0.75
+        # 文字が一度に出るゲーム。背景が動くと字の形が揺れるので、見続けても残る点を字と見なし、
+        # その点が消えたら別の文と判断する
+        if self.age == 0:
+            return False
+        size = int(self.core.sum())
+        kept = size - new_pixels(self.core, mask)
+        # 見続けて残った点はほとんど消えない。同じ位置の短い文どうしも見分けられるよう高くする
+        limit = 0.8 if self.age >= 2 else 0.5
+        return kept < size * limit or new_pixels(mask, self.core) > max(1000, size)
 
 
 class SceneTracker:

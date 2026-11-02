@@ -56,6 +56,47 @@ def test_menu_screen_change_without_key_is_not_read(game_path, style):
     assert sim.reader.other_calls == calls
 
 
+def test_two_quick_moves_read_the_final_item(game_path, style):
+    """続けて動かしたら、最後の項目を読む。古い項目で止まらない。"""
+    sim = sim_for(game_path, style)
+    sim.view = menu_view(0)
+    sim.run(2.0)
+    sim.press("cursor", "down")
+    sim.view = menu_view(1)
+    sim.run(0.4)
+    sim.press("cursor", "down")
+    sim.view = menu_view(2)
+    sim.run(2.5)
+    assert sim.reader.other_calls >= 3
+    assert sim.said("screen")[-1] == f"項目{sim.reader.other_calls}"
+
+
+def test_menu_after_dawn_discards_the_description(game_path, style):
+    """暗転のあとに出たのがメニューなら、説明を読まず合図も鳴らさない。"""
+    sim = sim_for(game_path, style, read_delay=1.5)
+    sim.view = synth.View(scene=1, dark=1.0)
+    sim.run(1.0)
+    sim.view = synth.View(scene=2)
+    sim.run(0.6)
+    assert sim.reader.describe_calls == 1
+    sim.view = menu_view(0)
+    sim.run(3.0)
+    assert sim.said("description") == []
+    assert sim.events("tone") == []
+
+
+def test_ignored_text_is_not_read(style, tmp_path):
+    import json
+    path = synth.write_game(style, tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["text"]["ignore"] = ["読まない字。"]
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    sim = Sim(style, load_config(path))
+    sim.view = synth.View(scene=1, text="読まない字。")
+    sim.run(2.0)
+    assert sim.said() == []
+
+
 def test_revisited_menu_item_uses_memory(game_path, style, monkeypatch):
     monkeypatch.setattr(synth, "MOTION", 0.0)
     sim = sim_for(game_path, style)

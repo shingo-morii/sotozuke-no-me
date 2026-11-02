@@ -241,13 +241,26 @@ def test_same_picture_is_not_described_twice(game_path, style, monkeypatch):
     monkeypatch.setattr(synth, "MOTION", 0.0)
     sim = sim_for(game_path, style)
     dawn(sim, 2)
+    show(sim, S[0])
     sim.run(3.0)
     dawn(sim, 3)
+    show(sim, S[1])
     sim.run(3.0)
     dawn(sim, 2)
+    show(sim, S[2])
     sim.run(3.0)
     assert sim.reader.describe_calls == 2
     assert len(sim.said("description")) == 3
+
+
+def test_movie_without_text_is_not_described_again(game_path, style):
+    """文が出ないまま暗転が続くのは映像の区間。説明は最初の1回だけ。"""
+    sim = sim_for(game_path, style)
+    for scene in (2, 3, 4, 5):
+        dawn(sim, scene)
+        sim.run(2.0)
+    assert sim.reader.describe_calls == 1
+    assert len(sim.events("dawn_skipped")) == 3
 
 
 def test_description_is_kept_for_the_key(game_path, style):

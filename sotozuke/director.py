@@ -22,6 +22,7 @@ from .watcher import KindChanged, SceneDawn, ScreenSettled, TEXT_KIND, TextReady
 FAIL_AFTER_S = 3.0        # これだけ待っても読めなければ短い音で知らせる
 DESCRIPTION_HOLD_S = 3.0  # 説明を待って文を止めておく長さ
 SAME_PICTURE_DIFF = 10.0  # 粗い絵の差がこれ未満なら同じ絵
+KEY_RECENT_S = 1.5        # キーのあとこの間に落ち着いた画面の変化は、利用者が動かしたものと見なす
 
 
 class Tasks(Protocol):
@@ -74,7 +75,7 @@ class Scene:
     text: str = ""
     audio: np.ndarray | None = None
     held: tuple[str, np.ndarray] | None = None
-    late_chime: bool = False
+    discarded: bool = False
 
 
 @dataclass
@@ -121,7 +122,8 @@ class Director:
         self.latest_frame: np.ndarray | None = None
         self.choice: ChoiceSession | None = None
         self.screen: ScreenState | None = None
-        self.key_since_settled = False
+        self.last_key_t = -100.0
+        self.text_since_scene = True
         self.after_speech: Callable[[], None] | None = None
         self.screen_cache: dict[tuple[str, bool, str], tuple[str, str, np.ndarray]] = {}
 
@@ -171,6 +173,7 @@ class Director:
     def _on_text(self, event: TextReady) -> None:
         self.band = event.band
         self.spoken = None
+        self.text_since_scene = True
         voiced = self._is_voiced(event)
         self.s.log("text_ready", voiced=voiced)
         scene = self.scene
@@ -222,6 +225,8 @@ class Director:
             return
         text, audio = value
         self.s.log("read_done", text=text, generation=generation)
+        if text in self.config.text.ignore:
+            return
         self.spoken = (text, audio)
         scene = self.scene
         waiting = scene and (scene.state == "speaking" or
@@ -239,6 +244,11 @@ class Director:
         sample = small_gray(event.frame, self.config.scene.box)
         if self.scene is not None and _same_picture(sample, self.scene.sample):
             return
+        if not self.text_since_scene:
+            # 文が出ないまま絵が変わり続けるのは映像の区間。説明を作らない
+            self.s.log("dawn_skipped")
+            return
+        self.text_since_scene = False
         scene = Scene(sample, event.frame, self.s.clock() + DESCRIPTION_HOLD_S)
         self.scene = scene
         for known_sample, text, audio in self.scene_memory:
@@ -262,7 +272,9 @@ class Director:
             self._release_held(scene)
             return
         text, audio = value
-        self.s.log("description_done", text=text)
+        self.s.log("description_done", text=text, discarded=scene.discarded)
+        if scene.discarded:
+            return
         self.scene_memory.append((scene.sample, text, audio))
         self._scene_ready(scene, text, audio)
 
@@ -310,7 +322,11 @@ class Director:
             self._read_card(event)
         elif event.new != TEXT_KIND:
             self.screen = ScreenState(event.screen)
-            self.key_since_settled = True
+            scene = self.scene
+            if scene and scene.state == "generating":
+                # 暗転のあとに出たのは場面でなくメニューだった。説明は捨てる
+                scene.state = "done"
+                scene.discarded = True
 
     def _start_choice(self, event: KindChanged) -> None:
         rule = self.config.choice
@@ -405,9 +421,8 @@ class Director:
         if state is None or event.screen is None or event.kind == "choice":
             return
         first = not state.entered
-        if not first and not self.key_since_settled:
+        if not first and self.s.clock() - self.last_key_t > KEY_RECENT_S:
             return  # 利用者が動かしていない変化は読まない。絵の動きで費用が増えるのを防ぐ
-        self.key_since_settled = False
         state.entered = True
         if event.kind == "walk" and not first:
             return
@@ -461,7 +476,8 @@ class Director:
             data, _ = reader.read_confirm(frame)
             selected = str(data.get("selected", ""))
             message = str(data.get("message", ""))
-            return (f"{message}。{selected}" if first else selected), message
+            sep = "" if message.endswith(("。", "？", "！")) else "。"
+            return (f"{message}{sep}{selected}" if first else selected), message
         if kind == "map":
             prompt = screen.prompt if first else screen.prompt_move
             return reader.read_map(frame, moved=not first, prompt=prompt).text, title
@@ -477,7 +493,7 @@ class Director:
     def _on_advance(self) -> None:
         """押した瞬間に読み上げを止める。作っている途中の結果は鳴らさない。"""
         self.watcher.on_key()
-        self.key_since_settled = True
+        self.last_key_t = self.s.clock()
         self._next_generation()
         self._stop_sound()
         self.after_speech = None
@@ -491,7 +507,7 @@ class Director:
                 scene.state = "done"
 
     def _on_cursor(self) -> None:
-        self.key_since_settled = True
+        self.last_key_t = self.s.clock()
 
     def _on_stop(self) -> None:
         self._stop_sound()

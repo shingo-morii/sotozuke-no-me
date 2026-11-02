@@ -112,7 +112,9 @@ class App:
     def _on_command(self, command) -> None:
         # 止めるのは入力の流れからすぐ行う。判断は1本の流れで行う
         if command.kind == "advance":
+            playing = self.player.playing
             self.player.stop()
+            self.log("stop_now", playing=playing)
         self.tasks.post(lambda: self.director.on_command(command))
 
     def announce(self, text: str) -> None:
