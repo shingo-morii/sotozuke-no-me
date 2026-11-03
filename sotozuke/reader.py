@@ -101,6 +101,21 @@ def clean_text(raw: str) -> str:
     return text.strip()
 
 
+REASONING = re.compile(r"ユーザーの質問|回答案|字数約|最終的な答え|考えた過程")
+
+
+def drop_reasoning(text: str) -> str:
+    """考えの途中が混ざった答えから、最後の答えの文だけを残す。頼んでも考えを書くことがある。"""
+    if not REASONING.search(text):
+        return text
+    for marks in (r"[)）」]", r"[:：]"):
+        tail = re.split(marks, text)[-1].strip(" 　:：")
+        if len(tail) >= 6 and not REASONING.search(tail):
+            return tail
+    quoted = [q for q in re.findall(r"「([^「」]{6,})」", text) if not REASONING.search(q)]
+    return quoted[-1] if quoted else ""
+
+
 def same_text(a: str, b: str) -> bool:
     """読み上げの音が同じなら同じ文と見なす。数字の全角半角、かぎかっこの種類、空きは問わない。"""
     def shape(text: str) -> str:
@@ -263,12 +278,12 @@ class ClaudeReader:
     def read_map(self, frame: np.ndarray, moved: bool, prompt: str = "") -> ReadResult:
         prompt = prompt or (PROMPT_MAP_MOVE if moved else PROMPT_MAP)
         result = self.ask(frame, prompt, PICTURE_MODEL, "map", max_tokens=1500, extra_body=LOW_EFFORT)
-        result.text = clean_text(result.text)
+        result.text = drop_reasoning(clean_text(result.text))
         return result
 
     def read_plain(self, frame: np.ndarray, prompt: str, purpose: str) -> ReadResult:
         result = self.ask(frame, prompt, TEXT_MODEL, purpose, thinking=NO_THINKING)
-        result.text = clean_text(result.text)
+        result.text = drop_reasoning(clean_text(result.text))
         if is_no_text(result.text):
             result.text = ""
         return result

@@ -91,6 +91,34 @@ def test_menu_screen_change_without_key_is_not_read(game_path, style):
     assert sim.reader.other_calls == calls
 
 
+def test_cursor_move_reads_the_frame_after_it_changes(game_path, style, monkeypatch):
+    """開く途中の絵を覚えていても、キーのあと絵が変わるまで待ってから読む。動く前の絵を読まない。"""
+    monkeypatch.setattr(synth, "MOTION", 0.0)
+    sim = sim_for(game_path, style)
+    after = synth.render(style, menu_view(1))
+    seen = []
+
+    def read_menu(frame):
+        seen.append(float(np.abs(frame.astype(np.int16) - after.astype(np.int16)).mean()) < 1.0)
+        return {"title": "メニュー", "selected": f"項目{len(seen)}"}, None
+
+    monkeypatch.setattr(sim.reader, "read_menu", read_menu)
+    sim.view = menu_view(0)
+    sim.run(2.0)
+    before = synth.render(style, menu_view(0)).astype(np.float32)
+    sim.press("cursor", "down")
+    # 選択の光が少しずつ移る。1コマごとの差は小さい
+    for step in range(1, 9):
+        frame = (before + (after.astype(np.float32) - before) * step / 8).astype(np.uint8)
+        sim.tasks.run_due()
+        sim.director.step(frame, sim.clock.now)
+        sim.clock.now += 0.1
+    sim.view = menu_view(1)
+    sim.run(2.0)
+    assert len(seen) == 2
+    assert seen[-1] is True
+
+
 def test_two_quick_moves_read_the_final_item(game_path, style):
     """続けて動かしたら、最後の項目を読む。古い項目で止まらない。"""
     sim = sim_for(game_path, style)
@@ -102,7 +130,7 @@ def test_two_quick_moves_read_the_final_item(game_path, style):
     sim.press("cursor", "down")
     sim.view = menu_view(2)
     sim.run(2.5)
-    assert sim.reader.other_calls >= 3
+    assert sim.reader.other_calls >= 2
     assert sim.said("screen")[-1] == f"項目{sim.reader.other_calls}"
 
 

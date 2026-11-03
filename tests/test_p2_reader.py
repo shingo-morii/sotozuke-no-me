@@ -80,6 +80,17 @@ def test_refusal_wording_counts_as_no_text():
     assert is_no_text("画面に場所の名前は書かれていないため、何も返しません")
 
 
+def test_reasoning_in_the_answer_is_dropped():
+    """読み手が考えの途中を答えに混ぜたら、最後の答えの文だけを残す。"""
+    from sotozuke.reader import drop_reasoning
+    answer = "眼鏡をかけた茶髪の人物が、地図上部の学校近くの住宅地に立ち、ハートの印はありません。"
+    raw = ("ユーザーの質問は「画面の中央に大きく立っている人物がいま選ばれている」。画像を見ると、眼鏡の人物が大きい。"
+           f"回答案:「{answer}」(字数約45){answer}")
+    assert drop_reasoning(raw) == answer
+    assert drop_reasoning("最終的な答えは次です：右上は家です。") == "右上は家です。"
+    assert drop_reasoning(answer) == answer
+
+
 def test_text_part_is_found_after_thinking():
     assert response_text(FakeResponse([Block("thinking"), Block("text", "本文")])) == "本文"
 

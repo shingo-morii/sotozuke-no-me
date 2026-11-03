@@ -20,6 +20,8 @@ SETTLE_FRAMES = 2
 SETTLE_CELL_DIFF = 25
 SETTLE_CELLS = 3
 FORCE_SETTLE_S = 1.2  # 背景が動き続ける画面でも、この時間で読む
+CURSOR_WAIT_S = 0.35  # カーソルのあと、選択の光が移り終わるまで読まない
+FINE_CELL_DIFF = 6    # カーソルのあとは、少しずつ移る光も動きと見る
 FORCE_JUDGE_S = 1.2   # キーのあと字の形が揺れて止まらなくても、この時間で文を判定する
 FORCE_AGAIN_S = 0.6
 RECENT_FRAMES = 3
@@ -321,6 +323,8 @@ class Watcher:
         self.settled_sample: np.ndarray | None = None
         self.force_at: float | None = None
         self.expecting = False
+        self.cursor_moved = False
+        self.cursor_until: float | None = None
 
     def on_key(self) -> None:
         self.text.on_key()
@@ -329,6 +333,7 @@ class Watcher:
     def expect_change(self) -> None:
         """カーソルが動いたので、画面が落ち着かなくても読む。"""
         self.expecting = True
+        self.cursor_moved = True
 
     def settle_again(self) -> None:
         """読めなかったので、画面が変わっていなくてももう一度知らせる。"""
@@ -382,9 +387,18 @@ class Watcher:
         if self.expecting:
             self.expecting = False
             self.force_at = t + FORCE_SETTLE_S
+        if self.cursor_moved:
+            # 光が少しずつ移ると1コマの差は小さく、移る途中の絵を読んでしまう。少し待ち、細かい差も見る
+            self.cursor_moved = False
+            self.cursor_until = t + CURSOR_WAIT_S
+            self.settle_count = 0
+        fine = self.cursor_until is not None
+        if fine and t < self.cursor_until:
+            return None
         forced = self.force_at is not None and t >= self.force_at
         if not forced:
-            if previous is None or _changed(sample, previous):
+            moving = previous is None or _changed(sample, previous, FINE_CELL_DIFF if fine else SETTLE_CELL_DIFF)
+            if moving:
                 self.settle_count = 0
                 return None
             self.settle_count += 1
@@ -392,15 +406,17 @@ class Watcher:
                 return None
             if self.settled_sample is not None and not _changed(sample, self.settled_sample):
                 self.force_at = None  # 動かしても画面が変わらなかった
+                self.cursor_until = None
                 return None
         self.force_at = None
+        self.cursor_until = None
         self.settled_sample = sample
         return ScreenSettled(t, self.kind, self.screen, frame)
 
 
-def _changed(a: np.ndarray, b: np.ndarray) -> bool:
+def _changed(a: np.ndarray, b: np.ndarray, cell_diff: int = SETTLE_CELL_DIFF) -> bool:
     diff = np.abs(a.astype(np.int16) - b.astype(np.int16))
-    return int((diff > SETTLE_CELL_DIFF).sum()) >= SETTLE_CELLS
+    return int((diff > cell_diff).sum()) >= SETTLE_CELLS
 
 
 __all__ = [
