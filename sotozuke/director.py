@@ -18,6 +18,7 @@ from . import reader as prompts
 from .game_config import GameConfig, ScreenRule
 from .image_ops import crop, fingerprint, small_gray, to_gray
 from .inputs import Command
+from .walk import WalkGuide
 from .watcher import (KindChanged, SceneDawn, ScreenSettled, TEXT_KIND, TextReady, Watcher,
                       has_name_tag)
 
@@ -61,6 +62,7 @@ class Services:
     chime: np.ndarray
     fail_tone: np.ndarray
     is_voice_playing: Callable[[], bool] = lambda: False
+    walk_tones: dict[str, np.ndarray] = field(default_factory=dict)  # 歩く画面の刻みと、進めないときの音
 
 
 @dataclass
@@ -135,6 +137,12 @@ class Director:
         self.text_since_scene = True
         self.after_speech: Callable[[], None] | None = None
         self.screen_cache: dict[tuple[str, bool, str], tuple[str, str, np.ndarray]] = {}
+        self.walk = WalkGuide(config.walk, self) if config.walk else None
+
+    @property
+    def walk_tones(self) -> dict[str, np.ndarray]:
+        tones = self.s.walk_tones
+        return {name: tones.get(name, self.s.chime) for name in ("tick", "tick90", "bump")}
 
     # ここから入口。app か試験の土台が呼ぶ
 
@@ -153,6 +161,8 @@ class Director:
         if self.choice and self.choice.ready:
             self._track_choice(frame)
         self._recheck_tag(frame)
+        if self.walk and self.watcher.kind == "walk":
+            self.walk.step(frame, self.s.clock())
         self.tick()
 
     def tick(self) -> None:
@@ -181,6 +191,16 @@ class Director:
 
     def on_command(self, command: Command) -> None:
         self.s.log("key", kind=command.kind, source=command.source)
+        if self.walk:
+            now = self.s.clock()
+            if command.kind == "release":
+                self.walk.key_up(command.source, now)
+            elif command.kind in ("cursor", "move") and self.watcher.kind == "walk":
+                self.walk.key_down(command.source, now)
+            elif command.kind == "advance" and self.watcher.kind == "map":
+                self.walk.remember_target(self.latest_frame)
+        if command.kind in ("release", "move"):
+            return
         handler = {
             "advance": self._on_advance, "cursor": self._on_cursor, "repeat": self._on_repeat,
             "describe": self._on_describe, "stop": self._on_stop,
@@ -374,6 +394,8 @@ class Director:
         elif event.new != TEXT_KIND:
             if event.new != "loading":
                 self.screen = ScreenState(event.screen)
+            if event.new == "walk" and self.walk:
+                self.walk.enter()
             scene = self.scene
             if scene and scene.state == "generating":
                 # 暗転のあとに出たのは場面でなくメニューだった。説明は捨てる
@@ -491,7 +513,7 @@ class Director:
         self._stop_sound()
         self.after_speech = None
         key = (event.screen.name, first, fingerprint(frame))
-        cached = self.screen_cache.get(key)
+        cached = self.screen_cache.get(key) if event.kind != "walk" else None  # 目当ての人の向きは毎回違う
         if cached:
             text, title, audio = cached
             state.title = title
@@ -548,7 +570,10 @@ class Director:
             return reader.read_map(frame, moved=not first, prompt=prompt).text, title
         if kind == "walk":
             name = reader.read_plain(frame, prompts.PROMPT_WALK, "walk").text
-            return (f"{name}。歩く画面です。" if name else "歩く画面です。"), title
+            text = f"{name}。歩く画面です。" if name else "歩く画面です。"
+            if self.walk:
+                text += self.walk.entry_text(frame)
+            return text, title
         if kind == "backlog":
             return reader.read_plain(frame, prompts.PROMPT_BACKLOG, "backlog").text, title
         return reader.read_plain(frame, prompts.PROMPT_ALL, "screen").text, title
@@ -669,6 +694,9 @@ class Director:
         frame = self.latest_frame
         if frame is None:
             return
+        if self.walk:
+            self.walk.check(frame, around=True)
+            return
         generation = self._next_generation()
         self._stop_sound()
 
@@ -721,6 +749,12 @@ class Director:
             self.s.log("stop")
         self.s.sound.stop()
         self.speaking = None
+
+    def _tone_now(self, tone: np.ndarray, name: str) -> None:
+        """読み上げの途中でも鳴らす合図。歩く画面で回した角度や、進めないことを知らせる。"""
+        self.s.log("tone", name=name)
+        self.speaking = None
+        self.s.sound.play(tone)
 
     def _play_tone(self, tone: np.ndarray, name: str) -> None:
         self.s.log("tone", name=name)

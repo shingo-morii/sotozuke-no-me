@@ -112,6 +112,20 @@ class ChoiceRule:
 
 
 @dataclass(frozen=True)
+class WalkRule:
+    """歩く画面の道案内。回る速さと画角はゲームで測って書く。"""
+    move_keys: tuple[str, ...] = ("w", "a", "s", "d")
+    turn_left: str = "left"
+    turn_right: str = "right"
+    turn_deg_per_s: float = 0.0   # 矢印を押している間に回る速さ。0 なら角度を言わない
+    view_deg: float = 0.0         # 画面の横の画角。0 なら「やや右」のような言葉で言う
+    tick_deg: float = 30.0        # 回している間、この角度ごとに短い音を鳴らす
+    bump_diff: float = 1.0        # 歩くキーを押しているのに画面の差がこれ未満なら、止まっている
+    hint: str = ""                # 初めて歩く画面に入ったときに言う操作の案内
+    target_prompt: str = ""       # 地図で決めたとき、選ばれている人の見た目を聞く頼み
+
+
+@dataclass(frozen=True)
 class GameConfig:
     name: str
     size: tuple[int, int]
@@ -128,6 +142,7 @@ class GameConfig:
     advance_keys: tuple[str, ...]
     cursor_keys: tuple[str, ...]
     audio_threshold: float = 0.05   # 音で見るとき、声と見なす針の値。背景の音楽より大きくする
+    walk: WalkRule | None = None
     source: Path | None = None
 
 
@@ -191,6 +206,13 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
                 strip_label=bool(raw.get("strip_label", True)),
             )
 
+        walk = None
+        if data.get("walk"):
+            walk_raw = dict(data["walk"])
+            if "move_keys" in walk_raw:
+                walk_raw["move_keys"] = tuple(walk_raw["move_keys"])
+            walk = WalkRule(**walk_raw)
+
         marker = data.get("next_marker")
         return GameConfig(
             name=data["name"], size=size,
@@ -202,6 +224,7 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
             advance_keys=tuple(data.get("keys", {}).get("advance", ["enter"])),
             cursor_keys=tuple(data.get("keys", {}).get("cursor", ["up", "down"])),
             audio_threshold=float(data.get("audio_threshold", 0.05)),
+            walk=walk,
         )
     except KeyError as exc:
         raise ConfigError(f"設定の項目がありません: {exc}") from exc

@@ -55,8 +55,18 @@ class KeyMapper:
     def __init__(self, advance: Iterable[str], cursor: Iterable[str],
                  bindings: dict[str, tuple[str, ...]] | None = None,
                  pad_advance: Iterable[str] = ("pad_a",),
-                 pad_cursor: Iterable[str] = ("pad_up", "pad_down", "pad_left", "pad_right")):
+                 pad_cursor: Iterable[str] = ("pad_up", "pad_down", "pad_left", "pad_right"),
+                 move: Iterable[str] = (), hold: Iterable[str] = ()):
         self.table: dict[str, str] = {}
+        # 離した瞬間も知らせるキー。歩く画面で、押している長さから回した角度を見積もる
+        self.hold: set[str] = set()
+        for name in move:
+            self._bind(name, "move")
+            self.hold.add(name)
+        for name in hold:
+            if name not in self.table:
+                self._bind(name, "cursor")
+            self.hold.add(name)
         for command, names in (bindings or DEFAULT_BINDINGS).items():
             for name in names:
                 self._bind(name, command)
@@ -83,6 +93,9 @@ class KeyMapper:
         kind = self.table.get(name)
         return Command(kind, name, t) if kind else None
 
+    def on_release(self, name: str, t: float) -> Command | None:
+        return Command("release", name, t) if name in self.hold else None
+
 
 class EdgeDetector:
     """状態の一覧から、押された瞬間だけを取り出す。"""
@@ -92,8 +105,11 @@ class EdgeDetector:
 
     def update(self, pressed: set[str]) -> list[str]:
         new = sorted(pressed - self.down)
+        self.released = sorted(self.down - pressed)
         self.down = pressed
         return new
+
+    released: list[str] = []
 
 
 def _key_state(names: Iterable[str]) -> set[str]:
@@ -163,4 +179,9 @@ class InputWatcher:
                     command = self.mapper.on_press(name, time.monotonic())
                     if command:
                         self.on_command(command)
+            for name in self.edges.released:
+                # 離したのは窓が前になくても知らせる。押したままの見積もりが残らないように
+                command = self.mapper.on_release(name, time.monotonic())
+                if command:
+                    self.on_command(command)
             time.sleep(self.interval_s)

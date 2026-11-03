@@ -142,6 +142,19 @@ class FakeReader:
         self.other_calls += 1
         return FakeResult(f"{purpose}の字")
 
+    target_look = "金髪の女子"
+    found = {"found": True, "x": 80, "distance": "近い", "around": "右に入口"}
+    find_calls = 0
+
+    def read_target(self, frame, prompt):
+        self.other_calls += 1
+        return FakeResult(self.target_look)
+
+    def find_target(self, frame, target):
+        self.find_calls += 1
+        self.last_target = target
+        return dict(self.found), FakeResult("")
+
 
 @dataclass
 class Sim:

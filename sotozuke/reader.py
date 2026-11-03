@@ -67,6 +67,19 @@ PROMPT_WALK_VIEW = (
     "それ以外の人物が、正面、左、右のどこに、近いか遠いかと、髪や服の見た目、進める通路の向き、"
     "横へ入れる入口や分かれ道を、100字以内の日本語で書いてください。説明の文だけを返してください。"
 )
+PROMPT_TARGET = (
+    "画像はゲームの行き先を選ぶ画面です。いま選ばれている人物の髪の色、髪型、服を、20字以内の日本語で書いてください。"
+    "人物が選ばれていなければ「なし」とだけ返してください。説明の文だけを返してください。"
+)
+PROMPT_WALK_TARGET = (
+    "画像はゲームの中を歩く3Dの画面です。目の見えない人の道案内をします。画面の手前で背中を見せている人物は、"
+    "操作している主人公なので数えないでください。\n探している人物：{target}\n"
+    "髪の色と服で見分けてください。よく似た人物が写っていなければ found は false にしてください。"
+    "次の形の JSON だけを返してください。考えた過程は書かないでください。\n"
+    '{{"found": true か false, "x": 探している人物の画面の横の位置（左端0、中央50、右端100）, '
+    '"distance": "すぐ前"（1、2歩）か "近い"（数歩）か "中くらい" か "遠い", '
+    '"around": "ほかの人物と、進める通路や横の入口の向きを、40字以内の日本語で"}}'
+)
 PROMPT_BACKLOG = (
     "画像はゲームの文字の履歴の画面です。いちばん明るく表示されている文だけを、一字も変えずに返してください。"
     "説明や飾りは付けないでください。"
@@ -288,6 +301,21 @@ class ClaudeReader:
         result = self.ask(frame, prompt, PICTURE_MODEL, "map", max_tokens=1500, extra_body=LOW_EFFORT)
         result.text = drop_reasoning(clean_text(result.text))
         return result
+
+    def read_target(self, frame: np.ndarray, prompt: str) -> ReadResult:
+        """地図で選ばれている人の見た目を短く聞く。歩く画面で探すときの手がかりにする。"""
+        result = self.ask(frame, prompt or PROMPT_TARGET, PICTURE_MODEL, "walk_target", max_tokens=1500,
+                          extra_body=LOW_EFFORT)
+        result.text = drop_reasoning(clean_text(result.text))
+        if is_no_text(result.text) or result.text.startswith("なし"):
+            result.text = ""
+        return result
+
+    def find_target(self, frame: np.ndarray, target: str) -> tuple[dict, ReadResult]:
+        """歩く画面で目当ての人を探す。11/4 に前の通しの絵36枚で比べ、Haiku は別の人を3回取り違えた。"""
+        result = self.ask(frame, PROMPT_WALK_TARGET.format(target=target), PICTURE_MODEL, "walk_find",
+                          max_tokens=1500, extra_body=LOW_EFFORT)
+        return parse_object(result.text), result
 
     def read_plain(self, frame: np.ndarray, prompt: str, purpose: str) -> ReadResult:
         result = self.ask(frame, prompt, TEXT_MODEL, purpose, thinking=NO_THINKING)

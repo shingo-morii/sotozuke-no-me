@@ -134,9 +134,14 @@ class App:
             clock=time.monotonic, log=self.log,
             chime=tone(880, 0.12), fail_tone=tone(330, 0.25),
             is_voice_playing=self.audio.voice_playing if self.audio else (lambda: False),
+            walk_tones={"tick": tone(1400, 0.03, 0.15), "tick90": tone(1900, 0.06, 0.2),
+                        "bump": tone(140, 0.15, 0.35)},
         )
         self.director = Director(config, Watcher(config), self.services)
-        self.mapper = KeyMapper(config.advance_keys, config.cursor_keys)
+        walk = config.walk
+        self.mapper = KeyMapper(config.advance_keys, config.cursor_keys,
+                                move=walk.move_keys if walk else (),
+                                hold=(walk.turn_left, walk.turn_right) if walk else ())
         self.inputs = InputWatcher(self.mapper, self._on_command, is_active=self.capture.in_front)
         self.size_warned = False
         self.running = True
