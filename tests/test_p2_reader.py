@@ -89,6 +89,14 @@ def test_reasoning_in_the_answer_is_dropped():
     assert drop_reasoning(raw) == answer
     assert drop_reasoning("最終的な答えは次です：右上は家です。") == "右上は家です。"
     assert drop_reasoning(answer) == answer
+    raw = "右上に青髪の少女。ただ、数え間違いと配置に誤りがあるので修正します。行き先は小さな人物4人と家。選択中は中央の黒髪の少女です。"
+    assert drop_reasoning(raw) == "行き先は小さな人物4人と家。選択中は中央の黒髪の少女です。"
+    raw = ("右上:黒髪の少女。ハートなし。ただ、ハートの位置を確認すると、ハートは家の右上です。修正して簡潔にまとめます。"
+           "右上:黒髪の少女、ハートなし。右下:家、ハートあり。")
+    assert drop_reasoning(raw) == "右上:黒髪の少女、ハートなし。右下:家、ハートあり。"
+    raw = ("中央に大きな人物はいません。目立つのは右上の少年です。ただ、50字以内で答える必要があります。"
+           "茶髪で黒い制服の少年が右上の学校のグラウンドにいて、頭上にハートはない。")
+    assert drop_reasoning(raw) == "茶髪で黒い制服の少年が右上の学校のグラウンドにいて、頭上にハートはない。"
 
 
 def test_text_part_is_found_after_thinking():

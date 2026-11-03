@@ -111,3 +111,38 @@ def test_games_folder_is_json_or_readme():
     for path in (ROOT / "games").glob("*"):
         assert path.suffix in {".json", ".md"} or path.is_dir()
     json.dumps({})
+
+
+def test_stall_dump_writes_stacks_when_the_loop_stops(tmp_path):
+    """1本の流れが止まったら、呼び出しの順がファイルに残る。止まった原因を調べるため。"""
+    import time
+    from sotozuke.app import StallDump
+    path = tmp_path / "speech.stacks.txt"
+    stall = StallDump(path, seconds=0.2)
+    stall.arm()
+    time.sleep(0.6)
+    stall.close()
+    assert "Thread" in path.read_text(encoding="utf-8")
+
+
+def test_stall_dump_stays_quiet_while_the_loop_runs(tmp_path):
+    import time
+    from sotozuke.app import StallDump
+    path = tmp_path / "speech.stacks.txt"
+    stall = StallDump(path, seconds=0.3)
+    for _ in range(8):
+        stall.arm()
+        time.sleep(0.1)
+    stall.close()
+    assert path.read_text(encoding="utf-8") == ""
+
+
+def test_stall_dump_writes_stacks_on_request(tmp_path):
+    from sotozuke.app import StallDump
+    path = tmp_path / "speech.stacks.txt"
+    stall = StallDump(path, seconds=30)
+    path.with_suffix(".request").write_text("")
+    stall.arm()
+    stall.close()
+    assert "most recent call first" in path.read_text(encoding="utf-8")
+    assert not path.with_suffix(".request").exists()

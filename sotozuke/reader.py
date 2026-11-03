@@ -101,17 +101,25 @@ def clean_text(raw: str) -> str:
     return text.strip()
 
 
-REASONING = re.compile(r"ユーザーの質問|回答案|字数約|最終的な答え|考えた過程")
+REASONING = re.compile(r"ユーザーの質問|回答案|字数約|字以内で|最終的な答え|考えた過程|理由を整理|指示では|まとめます|確認すると|修正します|数え間違い")
 
 
 def drop_reasoning(text: str) -> str:
     """考えの途中が混ざった答えから、最後の答えの文だけを残す。頼んでも考えを書くことがある。"""
     if not REASONING.search(text):
         return text
-    for marks in (r"[)）」]", r"[:：]"):
-        tail = re.split(marks, text)[-1].strip(" 　:：")
-        if len(tail) >= 6 and not REASONING.search(tail):
-            return tail
+    tail = re.split(r"[)）」]", text)[-1].strip(" 　:：")
+    if len(tail) >= 6 and not REASONING.search(tail):
+        return tail
+    # 考えの文のあとに答えが続く形。答えの中にも「右上:」のようなコロンがあるので、句点で先に分ける
+    sentences = re.findall(r"[^。]+。?", text)
+    last = max(i for i, part in enumerate(sentences) if REASONING.search(part))
+    tail = "".join(sentences[last + 1:]).strip()
+    if len(tail) >= 6:
+        return tail
+    tail = re.split(r"[:：]", text)[-1].strip(" 　:：")
+    if len(tail) >= 6 and not REASONING.search(tail):
+        return tail
     quoted = [q for q in re.findall(r"「([^「」]{6,})」", text) if not REASONING.search(q)]
     return quoted[-1] if quoted else ""
 

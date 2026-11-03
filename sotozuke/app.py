@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import json
 import os
 import queue
@@ -23,6 +24,7 @@ from .voice import CommandVoice, SapiVoice, VoiceCache
 from .watcher import Watcher
 
 FRAME_PERIOD_S = 0.1
+STALL_S = 30.0  # 1本の流れがこれだけ止まったら、呼び出しの順を書き残す
 
 
 class ThreadTasks:
@@ -56,6 +58,36 @@ class ThreadTasks:
                 self.results.get_nowait()()
             except queue.Empty:
                 return
+
+
+class StallDump:
+    """1本の流れが止まったら、全部の流れの呼び出しの順をファイルに書く。止まった原因をあとで調べるため。"""
+
+    def __init__(self, path: Path | None, seconds: float = STALL_S):
+        self.seconds = seconds
+        self.file = open(path, "a", encoding="utf-8") if path else None
+        # この名前のファイルが置かれたら、止まっていなくても書く。1本の流れ以外が止まったときに使う
+        self.request = path.with_suffix(".request") if path else None
+        self.checked_at = 0.0
+
+    def arm(self) -> None:
+        if not self.file:
+            return
+        faulthandler.dump_traceback_later(self.seconds, file=self.file)
+        now = time.monotonic()
+        if now - self.checked_at >= 1.0:
+            self.checked_at = now
+            if self.request.exists():
+                self.request.unlink()
+                self.file.write(f"--- 頼まれて書いた {time.strftime('%H:%M:%S')}\n")
+                faulthandler.dump_traceback(file=self.file, all_threads=True)
+                self.file.flush()
+
+    def close(self) -> None:
+        if self.file:
+            faulthandler.cancel_dump_traceback_later()
+            self.file.close()
+            self.file = None
 
 
 class JsonLog:
@@ -130,8 +162,10 @@ class App:
         if self.audio:
             self.audio.start()
         next_frame = time.monotonic()
+        stall = StallDump(Path(self.args.log).with_suffix(".stacks.txt") if self.args.log else None)
         try:
             while self.running:
+                stall.arm()
                 now = time.monotonic()
                 if now >= next_frame:
                     next_frame = max(next_frame + FRAME_PERIOD_S, now)
@@ -143,6 +177,7 @@ class App:
             self.announce("費用の上限に届いたので止まります。")
             time.sleep(2)
         finally:
+            stall.close()
             self.inputs.stop()
             if self.audio:
                 self.audio.stop()
