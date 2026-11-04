@@ -183,3 +183,41 @@ def test_keys_on_other_screens_do_not_start_a_search(game_path, style):
     sim.run(2.0)
     assert sim.reader.find_calls == 0
     assert sim.said("walk") == []
+
+
+def test_a_near_person_who_disappears_is_remembered(game_path, style):
+    """近づくと相手は画面の端で切れて見えなくなる。直前に見えた向きを、今の向きに直して言う。"""
+    sim = walk_sim(game_path, style)
+    sim.reader.found = {"found": True, "x": 20, "distance": "すぐ前"}
+    enter_walk_from_map(sim)
+    assert sim.said("screen")[-1].endswith("目当ての人は左へ20度、すぐ前。")
+    sim.reader.found = {"found": False}
+    sim.press("cursor", "right")
+    sim.run(0.5)
+    sim.press("release", "right")
+    sim.run(2.0)
+    assert sim.said("walk") == ["見えません。さっきは左へ60度のすぐ前に見えました。"]
+
+
+def test_a_far_person_who_disappears_is_not_remembered(game_path, style):
+    sim = walk_sim(game_path, style)
+    sim.reader.found = {"found": True, "x": 20, "distance": "遠い"}  # 遠い人は歩くうちに見えなくなるのが当たり前
+    enter_walk_from_map(sim)
+    sim.reader.found = {"found": False}
+    sim.press("move", "w")
+    sim.press("release", "w")
+    sim.run(2.0)
+    assert sim.said("walk") == ["見えません。"]
+
+
+def test_an_answer_after_leaving_the_walk_screen_is_dropped(game_path, style):
+    """話しかけて場面が始まったあとに、歩く画面の答えを読まない。"""
+    sim = walk_sim(game_path, style)
+    enter_walk_from_map(sim)
+    sim.press("move", "w")
+    sim.press("release", "w")
+    sim.run(0.9)  # 探し始めた。答えは1秒後に届く
+    sim.view = synth.View(scene=5, text="場面の文です。")
+    sim.run(2.0)
+    assert sim.said("walk") == []
+    assert any(r["what"] == "walk_check" for r in sim.events("drop_stale"))

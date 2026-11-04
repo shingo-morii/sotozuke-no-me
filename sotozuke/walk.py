@@ -21,6 +21,7 @@ CHECK_AFTER_S = 0.6     # キーを全部離してからこれだけたったら
 BUMP_AFTER_S = 0.4      # 歩くキーを押しているのに画面がこれだけ変わらなければ、進めないと知らせる
 TARGET_WAIT_S = 6.0     # 歩く画面に入ったとき、目当ての人の見た目が届くのをこれだけ待つ
 FRONT_DEG = 8.0         # これより小さい角度は正面と言う
+LAST_SEEN_S = 20.0      # 近くで見えた人が見えなくなったら、この間は見えた向きを言い添える
 DISTANCES = ("すぐ前", "近い", "中くらい", "遠い")
 
 
@@ -36,6 +37,22 @@ def bearing_text(x: float, view_deg: float) -> str:
     if abs(offset) < 0.2:
         return "正面"
     return f"やや{side}" if abs(offset) < 0.6 else f"{side}の端"
+
+
+def bearing_deg(x: float, view_deg: float) -> float:
+    """画面の横の位置を、画面の中央からの角度にする。右が正。"""
+    return (min(max(x, 0.0), 100.0) - 50.0) / 50.0 * view_deg / 2
+
+
+def direction_text(degrees: float) -> str:
+    """今の向きから見た方向。"""
+    degrees = (degrees + 180.0) % 360.0 - 180.0
+    if abs(degrees) < 15:
+        return "正面"
+    if abs(degrees) > 150:
+        return "後ろ"
+    side = "右" if degrees > 0 else "左"
+    return f"{side}へ{int(round(abs(degrees) / 15.0)) * 15}度"
 
 
 def heading_text(degrees: float) -> str:
@@ -91,6 +108,7 @@ class WalkGuide:
         self.previous: np.ndarray | None = None
         self.still_since: float | None = None
         self.bumped = False
+        self.last_seen: tuple[float, str, float] | None = None  # 見えた向き（初めの向きから）、近さ、時刻
 
     # 地図
 
@@ -117,6 +135,7 @@ class WalkGuide:
     # 歩く画面に入ったとき
 
     def enter(self) -> None:
+        self.last_seen = None
         self.heading = 0.0
         self.turn = None
         self.check_at = None
@@ -133,8 +152,29 @@ class WalkGuide:
         self.target_ready.wait(TARGET_WAIT_S)
         if self.target:
             data, _ = self.s.reader.find_target(frame, self.target)
-            parts.append("目当ての人は" + target_text(data, self.rule.view_deg))
+            parts.append("目当ての人は" + self.words(data, 0.0, self.s.clock()))
         return "".join(parts)
+
+    def words(self, data: dict, heading: float, now: float) -> str:
+        """目当ての人の向きと近さ。近くで見えていた人が見えなくなったら、見えた向きを言い添える。
+
+        近づくと、相手は画面の端で切れたり、手前の主人公の陰に入ったりして見えなくなる。
+        """
+        text = target_text(data, self.rule.view_deg)
+        if self.rule.turn_deg_per_s <= 0 or self.rule.view_deg <= 0:
+            return text
+        if data.get("found"):
+            try:
+                x = float(data.get("x", 50))
+            except (TypeError, ValueError):
+                x = 50.0
+            self.last_seen = (heading + bearing_deg(x, self.rule.view_deg), str(data.get("distance", "")), now)
+            return text
+        seen = self.last_seen
+        if seen and now - seen[2] <= LAST_SEEN_S and seen[1] in ("すぐ前", "近い", "中くらい"):
+            where = direction_text(seen[0] - heading)
+            text = text.rstrip("。") + f"。さっきは{where}の{seen[1]}に見えました。"
+        return text
 
     # キー
 
@@ -214,13 +254,14 @@ class WalkGuide:
         self.check_at = None  # 説明キーで聞いたら、離したあとの自動の確認はしない
         generation = d._next_generation()
         target = self.target
-        view_deg = self.rule.view_deg
         heading = self.heading if self.rule.turn_deg_per_s > 0 else None
+        now = self.s.clock()
 
         def work():
             if target:
                 data, _ = self.s.reader.find_target(frame, target)
-                text = "目当ての人は" + target_text(data, view_deg) if around else target_text(data, view_deg)
+                found = self.words(data, heading or 0.0, now)
+                text = "目当ての人は" + found if around else found
                 if around:
                     near = str(data.get("around", "")).strip()
                     text += near if near.endswith("。") or not near else near + "。"
@@ -232,7 +273,8 @@ class WalkGuide:
             return (text, self.s.speech(text)) if text else None
 
         def done(value, error):
-            if generation != d.generation:
+            if generation != d.generation or d.watcher.kind != "walk":
+                # 場面が始まって歩く画面を出たあとに、古い向きを言わない
                 self.s.log("drop_stale", what="walk_check", generation=generation)
                 return
             if error is not None or value is None:
