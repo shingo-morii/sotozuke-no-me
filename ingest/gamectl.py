@@ -8,8 +8,13 @@
     python -m ingest.gamectl --process Game.exe --work work burst 名前 30 0.1
     python -m ingest.gamectl --process Game.exe --work work mark 目標の名前
     python -m ingest.gamectl --process Game.exe --work work size
+    python -m ingest.gamectl --process Game.exe --work work click 640 600
+    python -m ingest.gamectl --process Game.exe --work work click 640 600 right
+    python -m ingest.gamectl --process Game.exe --work work move 640 300
+    python -m ingest.gamectl --process Game.exe --work work wheel 640 300 -1
 
-動作は全部 work/actions.jsonl に時刻つきで残る。探索の時間とキーの回数を、あとで機械で数える。
+マウスの座標は窓の中の座標（撮った画面の画素と同じ）。ホイールは上が正。
+動作は全部 work/actions.jsonl に時刻つきで残る。探索の時間とキーやマウスの回数を、あとで機械で数える。
 """
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ from pathlib import Path
 from PIL import Image
 
 from sotozuke.capture import WindowCapture, make_dpi_aware
+from sotozuke import sender
 from sotozuke.inputs import VK
 
 user32 = ctypes.windll.user32
@@ -122,6 +128,32 @@ class Control:
         send_key(name, up=True)
         self.log("hold", name=name, seconds=seconds)
 
+    def _screen_point(self, x: int, y: int) -> tuple[int, int] | None:
+        self.front()
+        origin = self.capture.origin()
+        if origin is None:
+            print("窓が見つかりません")
+            return None
+        return origin[0] + x, origin[1] + y
+
+    def click(self, x: int, y: int, button: str = "left") -> None:
+        point = self._screen_point(x, y)
+        if point:
+            sender.click_at(*point, button, hold_s=HOLD_S)
+            self.log("click", x=x, y=y, button=button)
+
+    def move(self, x: int, y: int) -> None:
+        point = self._screen_point(x, y)
+        if point:
+            sender.move_to(*point)
+            self.log("move", x=x, y=y)
+
+    def wheel(self, x: int, y: int, amount: int) -> None:
+        point = self._screen_point(x, y)
+        if point:
+            sender.wheel_at(*point, amount)
+            self.log("wheel", x=x, y=y, amount=amount)
+
     def burst(self, name: str, count: int, period: float) -> None:
         """連続で撮る。場面の切り替わりや文字の速さを調べるときに使う。時刻を添えて残す。"""
         self.front()
@@ -146,8 +178,9 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="gamectl")
     parser.add_argument("--process", required=True)
     parser.add_argument("--work", default="work")
-    parser.add_argument("command", choices=["shot", "key", "keys", "hold", "burst", "mark", "size"])
-    parser.add_argument("args", nargs="*")
+    parser.add_argument("command", choices=["shot", "key", "keys", "hold", "burst", "mark", "size",
+                                            "click", "move", "wheel"])
+    parser.add_argument("args", nargs="*", help="ホイールの負の数は -- のあとに書いてもよい")
     options = parser.parse_args(argv)
     control = Control(options.process, Path(options.work))
     args = options.args
@@ -167,6 +200,12 @@ def main(argv=None) -> int:
         control.log("mark", name=" ".join(args))
     elif options.command == "size":
         print(control.capture.size())
+    elif options.command == "click":
+        control.click(int(args[0]), int(args[1]), args[2] if len(args) > 2 else "left")
+    elif options.command == "move":
+        control.move(int(args[0]), int(args[1]))
+    elif options.command == "wheel":
+        control.wheel(int(args[0]), int(args[1]), int(args[2]))
     return 0
 
 

@@ -1,4 +1,4 @@
-"""探索の記録を数える。動作時間、キーの回数、目標に届いた時刻を出す。
+"""探索の記録を数える。動作時間、キーとマウスの回数、目標に届いた時刻を出す。
 
 使い方:
     python -m ingest.action_time work/actions.jsonl
@@ -27,6 +27,9 @@ def summarize(path: Path) -> dict:
     return {
         "total_s": round(rows[-1]["time"] - start, 1),
         "keys": sum(1 for r in rows if r["action"] == "key"),
+        "clicks": sum(1 for r in rows if r["action"] == "click"),
+        "moves": sum(1 for r in rows if r["action"] == "move"),
+        "wheels": sum(1 for r in rows if r["action"] == "wheel"),
         "shots": sum(1 for r in rows if r["action"] == "shot"),
         "progress_s": round(progress, 1),
         "marks": marks,
