@@ -1,7 +1,8 @@
-"""入力を見る。キーボードとコントローラの状態を読むだけ。ゲームには何も渡さない。
+"""入力を見る。キーボード、マウスのボタン、コントローラの状態を読むだけ。
 
 読み取りは GetAsyncKeyState と XInputGetState の見回り。フックを入れないので、
-スクリーンリーダーのキー操作と干渉しない。無変換キーは NVDA のキーなので割り当てない。
+スクリーンリーダーのキー操作と干渉しない。キーを握りつぶさないので、押したキーはゲームにも届く。
+無変換キーは NVDA のキーなので割り当てない。ゲームへ送るのはここではなく sender.py。
 """
 from __future__ import annotations
 
@@ -22,6 +23,9 @@ VK = {
 }
 for letter in "abcdefghijklmnopqrstuvwxyz":
     VK[letter] = ord(letter.upper())
+# マウスのボタン。マウスで動く画面を利用者が押したとき、そのあとの画面の変化を読むために見る
+MOUSE_BUTTONS = {"lbutton": 0x01, "rbutton": 0x02}
+VK.update(MOUSE_BUTTONS)
 
 VK_NONCONVERT = 0x1D  # 無変換
 RESERVED_KEYS = {"nonconvert"}
@@ -43,7 +47,10 @@ DEFAULT_BINDINGS = {
 
 @dataclass(frozen=True)
 class Command:
-    """入力から作る命令。kind は repeat、describe、stop、advance、cursor のどれか。"""
+    """入力から作る命令。kind は repeat、describe、stop、advance、cursor、key のどれか。
+
+    key は、ゲームの設定の対応表（input）にだけ出てくるキー。何をするかは判断の中心が画面ごとに決める。
+    """
     kind: str
     source: str
     t: float
@@ -56,7 +63,7 @@ class KeyMapper:
                  bindings: dict[str, tuple[str, ...]] | None = None,
                  pad_advance: Iterable[str] = ("pad_a",),
                  pad_cursor: Iterable[str] = ("pad_up", "pad_down", "pad_left", "pad_right"),
-                 move: Iterable[str] = (), hold: Iterable[str] = ()):
+                 move: Iterable[str] = (), hold: Iterable[str] = (), mapped: Iterable[str] = ()):
         self.table: dict[str, str] = {}
         # 離した瞬間も知らせるキー。歩く画面で、押している長さから回した角度を見積もる
         self.hold: set[str] = set()
@@ -78,6 +85,9 @@ class KeyMapper:
             self._bind(name, "cursor")
         for name in pad_cursor:
             self._bind(name, "cursor")
+        for name in mapped:
+            if name not in self.table:
+                self._bind(name, "key")
 
     def _bind(self, name: str, command: str) -> None:
         if name in RESERVED_KEYS:
@@ -150,10 +160,12 @@ class InputWatcher:
     """別の流れで入力を見回り、命令を on_command に渡す。"""
 
     def __init__(self, mapper: KeyMapper, on_command: Callable[[Command], None],
-                 is_active: Callable[[], bool] = lambda: True, interval_s: float = 0.01):
+                 is_active: Callable[[], bool] = lambda: True, interval_s: float = 0.01,
+                 is_own: Callable[[str], bool] = lambda name: False):
         self.mapper = mapper
         self.on_command = on_command
         self.is_active = is_active
+        self.is_own = is_own  # 本体が自分で押したマウスのボタンは、利用者の押しと数えない
         self.interval_s = interval_s
         self.edges = EdgeDetector()
         self._running = False
@@ -175,7 +187,7 @@ class InputWatcher:
         while self._running:
             pressed = _key_state(names) | _pad_state(xinput, names)
             for name in self.edges.update(pressed):
-                if self.is_active():
+                if self.is_active() and not self.is_own(name):
                     command = self.mapper.on_press(name, time.monotonic())
                     if command:
                         self.on_command(command)

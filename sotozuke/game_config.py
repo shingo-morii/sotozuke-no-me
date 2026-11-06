@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .inputs import DEFAULT_BINDINGS, MOUSE_BUTTONS, RESERVED_KEYS, VK
+
 Box = tuple[int, int, int, int]  # x0, y0, x1, y1。x1 と y1 は含まない
 
 VOICE_RULES = ("tag", "audio", "all")
@@ -19,6 +21,9 @@ SCREEN_KINDS = (
     "backlog",      # 文字の履歴
     "loading",      # 読み込みの画面。何も読まない
 )
+
+
+TEXT_KIND_NAME = "text"  # 文の画面。input の鍵に使う
 
 
 class ConfigError(ValueError):
@@ -131,6 +136,37 @@ class WalkRule:
     target_prompt: str = ""       # 地図で決めたとき、選ばれている人の見た目を聞く頼み
 
 
+MOUSE_DOS = ("move", "click", "wheel")
+ACTION_KINDS = ("", "advance", "cursor")
+
+
+@dataclass(frozen=True)
+class MouseAction:
+    """利用者のキー1回に対して、本体がゲームへ送る1つの動き。座標は窓の中の座標。"""
+    do: str                      # move は動かす、click は押す、wheel はホイール
+    at: tuple[int, int]
+    button: str = "left"         # click のときの left か right
+    amount: int = 0              # wheel のときの刻みの数。上が正
+    as_kind: str = ""            # 本体がこの押しを何と見るか。advance なら読み上げを止めてから送る
+
+
+@dataclass(frozen=True)
+class InputRule:
+    """画面ごとの入力の対応。キーで動かない画面で、キーをマウスの動きに言い換える。"""
+    keys: bool = True            # その画面でゲームがキーで動くか。取り込みで試して書く
+    actions: dict[str, MouseAction] = field(default_factory=dict)
+    rows: tuple[Box, ...] | str = ()  # 行を選ぶ画面の行の箱。"choice" は選択肢の行
+    prev: str = "up"
+    next: str = "down"
+    pick: str = "enter"
+
+    def key_names(self) -> set[str]:
+        names = set(self.actions)
+        if self.rows:
+            names |= {self.prev, self.next, self.pick}
+        return names
+
+
 @dataclass(frozen=True)
 class GameConfig:
     name: str
@@ -149,7 +185,15 @@ class GameConfig:
     cursor_keys: tuple[str, ...]
     audio_threshold: float = 0.05   # 音で見るとき、声と見なす針の値。背景の音楽より大きくする
     walk: WalkRule | None = None
+    input: dict[str, InputRule] = field(default_factory=dict)  # 鍵は画面の名前か種類（text など）
     source: Path | None = None
+
+    def input_keys(self) -> set[str]:
+        """対応表に出てくるキー。入力の見回りに入れる。"""
+        names: set[str] = set()
+        for rule in self.input.values():
+            names |= rule.key_names()
+        return names
 
 
 def _load_template_path(base: Path, value: str, label: str) -> Path:
@@ -227,6 +271,8 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
                 walk_raw["move_keys"] = tuple(walk_raw["move_keys"])
             walk = WalkRule(**walk_raw)
 
+        inputs = _parse_input(data.get("input", {}), size, screens, choice)
+
         marker = data.get("next_marker")
         return GameConfig(
             name=data["name"], size=size,
@@ -238,10 +284,69 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
             advance_keys=tuple(data.get("keys", {}).get("advance", ["enter"])),
             cursor_keys=tuple(data.get("keys", {}).get("cursor", ["up", "down"])),
             audio_threshold=float(data.get("audio_threshold", 0.05)),
-            walk=walk,
+            walk=walk, input=inputs,
         )
     except KeyError as exc:
         raise ConfigError(f"設定の項目がありません: {exc}") from exc
+
+
+def _point(value: Any, label: str, size: tuple[int, int]) -> tuple[int, int]:
+    if not (isinstance(value, (list, tuple)) and len(value) == 2):
+        raise ConfigError(f"{label}: 座標は2つの数で書く")
+    x, y = (int(v) for v in value)
+    if not (0 <= x < size[0] and 0 <= y < size[1]):
+        raise ConfigError(f"{label}: 座標が画面の外です {value}")
+    return (x, y)
+
+
+def _input_key(name: str, label: str) -> str:
+    body_keys = {k for names in DEFAULT_BINDINGS.values() for k in names}
+    if name not in VK or name in RESERVED_KEYS or name in MOUSE_BUTTONS:
+        raise ConfigError(f"{label}: 対応に使えないキーです {name}")
+    if name in body_keys:
+        raise ConfigError(f"{label}: 本体のキーは対応に使えません {name}")
+    return name
+
+
+def _parse_input(raw: dict, size: tuple[int, int], screens: list, choice) -> dict[str, InputRule]:
+    places = {TEXT_KIND_NAME, *SCREEN_KINDS, *(s.name for s in screens)}
+    rules = {}
+    for place, entry in raw.items():
+        label = f"input.{place}"
+        if place not in places:
+            raise ConfigError(f"{label}: 画面の名前か種類ではありません")
+        actions = {}
+        for key, act in entry.get("actions", {}).items():
+            where = f"{label}.actions.{key}"
+            action = MouseAction(
+                do=act["do"], at=_point(act["at"], where, size), button=act.get("button", "left"),
+                amount=int(act.get("amount", 0)), as_kind=act.get("as", ""),
+            )
+            if action.do not in MOUSE_DOS:
+                raise ConfigError(f"{where}: do は {MOUSE_DOS} のどれか")
+            if action.button not in ("left", "right"):
+                raise ConfigError(f"{where}: button は left か right")
+            if action.do == "wheel" and action.amount == 0:
+                raise ConfigError(f"{where}: wheel には amount を書く")
+            if action.as_kind not in ACTION_KINDS:
+                raise ConfigError(f"{where}: as は advance か cursor")
+            actions[_input_key(key, where)] = action
+        rows_raw = entry.get("rows", ())
+        if rows_raw == "choice":
+            if choice is None:
+                raise ConfigError(f"{label}: rows が choice なのに choice の設定がありません")
+            rows: tuple[Box, ...] | str = "choice"
+        else:
+            rows = tuple(_box(b, f"{label}.rows", size) for b in rows_raw)
+        rule = InputRule(keys=bool(entry.get("keys", True)), actions=actions, rows=rows,
+                         prev=entry.get("prev", "up"), next=entry.get("next", "down"),
+                         pick=entry.get("pick", "enter"))
+        if rows:
+            row_keys = [_input_key(k, label) for k in (rule.prev, rule.next, rule.pick)]
+            if len(set(row_keys)) != 3 or set(row_keys) & set(actions):
+                raise ConfigError(f"{label}: 行のキーと対応のキーが重なっています")
+        rules[place] = rule
+    return rules
 
 
 def load_config(path: str | Path) -> GameConfig:

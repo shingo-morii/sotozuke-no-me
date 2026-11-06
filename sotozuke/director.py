@@ -16,7 +16,7 @@ from typing import Any, Callable, Protocol
 import numpy as np
 
 from . import reader as prompts
-from .game_config import GameConfig, ScreenRule
+from .game_config import GameConfig, InputRule, MouseAction, ScreenRule
 from .image_ops import crop, fingerprint, glyph_mask, small_gray, to_gray
 from .inputs import Command
 from .walk import WalkGuide
@@ -64,6 +64,7 @@ class Services:
     fail_tone: np.ndarray
     is_voice_playing: Callable[[], bool] = lambda: False
     walk_tones: dict[str, np.ndarray] = field(default_factory=dict)  # 歩く画面の刻みと、進めないときの音
+    send: Callable[[MouseAction], None] = lambda action: None  # ゲームへ動きを送る。sender.py
 
 
 @dataclass
@@ -151,6 +152,7 @@ class Director:
         self.after_speech: Callable[[], None] | None = None
         self.screen_cache: dict[tuple[str, bool, str], tuple[str, str, np.ndarray]] = {}
         self.names: dict[str, str] = {}  # 札の字の形ごとに読んだ名前。同じ札は読み直さない
+        self.row_index: int | None = None  # 行を選ぶ画面で、本体がマウスを乗せた行
         self.walk = WalkGuide(config.walk, self) if config.walk else None
 
     @property
@@ -215,11 +217,56 @@ class Director:
                 self.walk.remember_target(self.latest_frame)
         if command.kind in ("release", "move"):
             return
+        action = self._action_for(command.source)
+        kind = command.kind
+        if action is not None and action.as_kind:
+            kind = action.as_kind
+        if kind == "key":  # 対応表にだけあるキー。動きがあれば、画面が変わるのを待って読む
+            kind = "cursor" if action is not None else ""
         handler = {
             "advance": self._on_advance, "cursor": self._on_cursor, "repeat": self._on_repeat,
             "describe": self._on_describe, "stop": self._on_stop,
-        }[command.kind]
-        handler()
+        }.get(kind)
+        if handler:
+            handler()  # 文を進めるなら、ここで読み上げを止めてから送る
+        if action is not None:
+            self._send_for_key(command, action)
+
+    # ゲームへ送る
+
+    def _send_for_key(self, command: Command, action: MouseAction) -> None:
+        """ゲームへ入力を送るのはここだけ。利用者のキー1回に1つの動き。"""
+        self.s.log("send", key=command.source, do=action.do, at=list(action.at))
+        self.s.send(action)
+
+    def _input_rule(self) -> InputRule | None:
+        screen = self.watcher.screen if self.watcher.kind != TEXT_KIND else None
+        if screen is not None and screen.name in self.config.input:
+            return self.config.input[screen.name]
+        return self.config.input.get(self.watcher.kind)
+
+    def _action_for(self, key: str) -> MouseAction | None:
+        """今の画面の対応表で、このキーを何の動きに言い換えるか。無ければ None。"""
+        rule = self._input_rule()
+        if rule is None:
+            return None
+        rows = self._input_rows(rule)
+        if rows:
+            if key in (rule.prev, rule.next):
+                step = -1 if key == rule.prev else 1
+                index = 0 if self.row_index is None else self.row_index + step
+                self.row_index = max(0, min(len(rows) - 1, index))
+                return MouseAction("move", _center(rows[self.row_index]))
+            if key == rule.pick:
+                if self.row_index is None:
+                    return None
+                return MouseAction("click", _center(rows[self.row_index]))
+        return rule.actions.get(key)
+
+    def _input_rows(self, rule: InputRule) -> list:
+        if rule.rows == "choice":
+            return self.choice.rows if self.choice and self.choice.ready else []
+        return list(rule.rows)
 
     # 文
 
@@ -452,6 +499,7 @@ class Director:
         self.same_check_at = None
         self.choice = None
         self.screen = None
+        self.row_index = None
         if event.new == "choice":
             self._start_choice(event)
         elif event.new == "card":
@@ -497,6 +545,7 @@ class Director:
         session.rows = self.config.choice.rows_for(len(items))
         frame = self.latest_frame if self.latest_frame is not None else session.frame
         session.selected = self._selected_row(frame, session.rows, 0)  # 選択肢が始まるたびに1行目から
+        self.row_index = session.selected
         session.ready = True
         self.s.log("choice_ready", items=items, selected=session.selected)
         # 音声は項目ごとに作ってあるので、つなぐだけで紹介ができる。待たせない
@@ -526,6 +575,7 @@ class Director:
             return
         session.candidate = None
         session.selected = index
+        self.row_index = index
         session.moved = True
         self._next_generation()
         self.after_speech = None
@@ -854,6 +904,10 @@ def speakable(text: str) -> str:
     if len(text) >= 4 and len(set(text)) == 1:
         return "無言。"
     return text
+
+
+def _center(box) -> tuple[int, int]:
+    return ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
 
 
 def _same_picture(a: np.ndarray, b: np.ndarray) -> bool:

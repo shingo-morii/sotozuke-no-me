@@ -78,6 +78,8 @@ def assert_new_items_are_off(config) -> None:
     assert config.text.end_marks == ""
     if config.tag is not None:
         assert config.tag.read_name is False
+    assert config.input == {}
+    assert config.input_keys() == set()
     if config.choice is not None:
         assert config.choice.selected == "bright"
     if config.scene is not None:

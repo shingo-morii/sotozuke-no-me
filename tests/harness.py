@@ -179,6 +179,7 @@ class Sim:
         self.reader.truth_text = lambda: self.view.text
         self.reader.truth_items = lambda: list(self.view.choices)
         self.reader.truth_name = lambda: self.view.name
+        self.sent: list = []  # 本体がゲームへ送った動き
 
         def speech(text: str) -> np.ndarray:
             # 1字0.1秒の長さの音と見なす
@@ -188,9 +189,14 @@ class Sim:
             reader=self.reader, speech=speech, sound=self.sound, tasks=self.tasks,
             clock=self.clock, log=self._log,
             chime=np.zeros(1, np.float32), fail_tone=np.zeros(1, np.float32),
+            send=self._send,
         )
         self.watcher = Watcher(self.config)
         self.director = Director(self.config, self.watcher, services)
+
+    def _send(self, action) -> None:
+        self.sent.append(action)
+        self.records.append({"t": round(self.clock.now, 2), "event": "sent", "do": action.do})
 
     def _log(self, event: str, **fields) -> None:
         self.records.append({"t": round(self.clock.now, 2), "event": event, **fields})

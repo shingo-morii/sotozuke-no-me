@@ -1,4 +1,9 @@
-"""P4 の関門。模擬の入力が命令に変わる。本体にキーを送る関数が無いことを機械で確かめる。"""
+"""P4 の関門。模擬の入力が命令に変わる。本体がゲームへ送る範囲を機械で確かめる。
+
+決まりは 11-06 に改めた。前は「本体はゲームにキーを送らない」で、送る語が本体に1つも無いことを確かめていた。
+今は「本体がゲームへ入力を送るのは、利用者が対応表のキーを押した直後だけ」。送る語は sender.py にだけあり、
+キーボードの入力は送らない。送る口がキーの直後からしか呼ばれないことは test_g1b_input.py で確かめる。
+"""
 from __future__ import annotations
 
 import re
@@ -10,7 +15,7 @@ from sotozuke.inputs import EdgeDetector, InputWatcher, KeyMapper
 
 ROOT = Path(__file__).resolve().parent.parent
 FORBIDDEN_WORDS = [
-    "SendInput", "keybd_event", "mouse_event", "PostMessage", "SendMessage",
+    "SendInput", "SetCursorPos", "keybd_event", "mouse_event", "PostMessage", "SendMessage",
     "pyautogui", "pynput",
 ]
 
@@ -98,15 +103,19 @@ def test_watcher_ignores_input_when_game_not_in_front(monkeypatch):
     assert got == []
 
 
-def test_gate_body_has_no_function_that_sends_keys():
-    """本体の中に、ゲームへキーや入力を送る語が1つも無いこと。"""
+def test_gate_body_sends_only_from_the_sender():
+    """本体の中で、ゲームへ入力を送る語は sender.py にだけある。sender.py もキーボードの入力は送らない。"""
     pattern = re.compile("|".join(FORBIDDEN_WORDS))
     found = []
     for path in sorted((ROOT / "sotozuke").rglob("*.py")):
+        if path.name == "sender.py":
+            continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if pattern.search(line):
                 found.append(f"{path.name}:{number}: {line.strip()}")
     assert not found, found
+    sender = (ROOT / "sotozuke" / "sender.py").read_text(encoding="utf-8")
+    assert not re.search(r"keybd_event|KEYEVENTF|INPUT_KEYBOARD|PostMessage|SendMessage|pyautogui|pynput", sender)
 
 
 def test_body_config_has_no_game_specific_values():

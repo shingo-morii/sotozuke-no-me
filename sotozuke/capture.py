@@ -86,6 +86,13 @@ class WindowCapture:
     def in_front(self) -> bool:
         return self.refresh() and is_foreground(self.hwnd)
 
+    def origin(self) -> tuple[int, int] | None:
+        """窓の中身の左上の、画面の上の座標。"""
+        if not self.refresh():
+            return None
+        left, top, _, _ = client_box(self.hwnd)
+        return left, top
+
     def size(self) -> tuple[int, int] | None:
         if not self.refresh():
             return None

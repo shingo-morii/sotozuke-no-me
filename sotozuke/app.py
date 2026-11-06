@@ -1,4 +1,7 @@
-"""常駐の本体。画面を撮り、判断の中心へ渡し、声で伝える。ゲームには何も送らない。"""
+"""常駐の本体。画面を撮り、判断の中心へ渡し、声で伝える。
+
+ゲームへ入力を送るのは、利用者が対応表のキーを押した直後だけ（sender.py）。対応表が空なら送る部品を作らない。
+"""
 from __future__ import annotations
 
 import argparse
@@ -20,6 +23,7 @@ from .game_config import GameConfig, load_config
 from .inputs import InputWatcher, KeyMapper
 from .player import Player, load_audio, tone
 from .reader import ClaudeReader
+from .sender import MouseSender
 from .voice import CommandVoice, SapiVoice, VoiceCache
 from .watcher import Watcher
 
@@ -129,6 +133,7 @@ class App:
             self.audio = GameAudioMonitor(threshold=config.audio_threshold,
                                           is_own_sound=lambda: self.player.playing)
         reader = ClaudeReader(CostLog(Path(args.costs), limit_usd=args.budget))
+        self.sender = MouseSender(self.capture.origin) if config.input else None
         self.services = Services(
             reader=reader, speech=self.speech, sound=self.player, tasks=self.tasks,
             clock=time.monotonic, log=self.log,
@@ -136,13 +141,16 @@ class App:
             is_voice_playing=self.audio.voice_playing if self.audio else (lambda: False),
             walk_tones={"tick": tone(1400, 0.03, 0.15), "tick90": tone(1900, 0.06, 0.2),
                         "bump": tone(140, 0.15, 0.35)},
+            send=self.sender.send if self.sender else (lambda action: None),
         )
         self.director = Director(config, Watcher(config), self.services)
         walk = config.walk
         self.mapper = KeyMapper(config.advance_keys, config.cursor_keys,
                                 move=walk.move_keys if walk else (),
-                                hold=(walk.turn_left, walk.turn_right) if walk else ())
-        self.inputs = InputWatcher(self.mapper, self._on_command, is_active=self.capture.in_front)
+                                hold=(walk.turn_left, walk.turn_right) if walk else (),
+                                mapped=sorted(config.input_keys()))
+        self.inputs = InputWatcher(self.mapper, self._on_command, is_active=self.capture.in_front,
+                                   is_own=self.sender.is_own if self.sender else (lambda name: False))
         self.size_warned = False
         self.running = True
 
@@ -184,6 +192,8 @@ class App:
         finally:
             stall.close()
             self.inputs.stop()
+            if self.sender:
+                self.sender.close()
             if self.audio:
                 self.audio.stop()
             self.player.close()
