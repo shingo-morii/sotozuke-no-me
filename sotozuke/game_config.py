@@ -104,6 +104,8 @@ class ChoiceRule:
     strip_label: bool = True
     selected: str = "bright"         # 選ばれている行。bright は明るい行、dark は暗い行（乗せると暗くなるゲーム）
     dark_margin: float = 0.0         # dark のとき、ほかの行よりこれだけ暗い行が無ければ前の行のまま
+    # bright のとき、1位と2位の差がこれ未満なら、はっきり明るい行は無い。0 は切（今のまま1位を選ぶ）
+    bright_margin: float = 0.0
 
     def rows_for(self, count: int) -> list[Box]:
         """項目の数ごとの行の位置。知らない数は、知っている2つの数から伸ばして求める。"""
@@ -258,6 +260,7 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
                 strip_label=bool(raw.get("strip_label", True)),
                 selected=raw.get("selected", "bright"),
                 dark_margin=float(raw.get("dark_margin", 0.0)),
+                bright_margin=float(raw.get("bright_margin", 0.0)),
             )
             if choice.selected not in ("bright", "dark"):
                 raise ConfigError(f"choice.selected は bright か dark: {choice.selected}")

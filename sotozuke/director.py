@@ -118,20 +118,29 @@ class ScreenState:
 
 
 def selected_row(frame: np.ndarray, rows: list[tuple[int, int, int, int]],
-                 mode: str = "bright", margin: float = 0.0, previous: int = 0) -> int:
+                 mode: str = "bright", margin: float = 0.0, previous: int | None = 0,
+                 bright_margin: float = 0.0) -> int | None:
     """行の明るさの1位を選ばれている行とする。閾値で決めると背景で外れる。
 
     乗せると暗くなるゲームは、ほかの行よりはっきり暗い行を選ぶ。マウスが行から外れると
-    どの行も同じ明るさになるので、そのときは前の行のままにする。
+    どの行も同じ明るさになるので、そのときは前の行のままにする。前の行が無ければ（選択肢が
+    始まったところなら）None、つまり選ばれていない。明るい行も bright_margin を書けば同じに見る。
+    行が無ければ前の行のまま（11-07、行の取れない選択肢で止まった）。
     """
+    if not rows:
+        return previous
     levels = [float(to_gray(crop(frame, box)).mean()) for box in rows]
     if mode != "dark":
-        return int(np.argmax(levels))
+        top = int(np.argmax(levels))
+        others = [v for i, v in enumerate(levels) if i != top]
+        if bright_margin > 0 and others and levels[top] - max(others) < bright_margin:
+            return previous if previous is None else min(previous, len(rows) - 1)
+        return top
     darkest = int(np.argmin(levels))
     others = [v for i, v in enumerate(levels) if i != darkest]
     if others and min(others) - levels[darkest] >= margin:
         return darkest
-    return min(previous, len(rows) - 1)
+    return previous if previous is None else min(previous, len(rows) - 1)
 
 
 class Director:
@@ -624,24 +633,34 @@ class Director:
         if session is not self.choice:
             self.s.log("drop_stale", what="choice")
             return
-        if error is not None or not value[0]:
+        if error is not None:
             self.s.log("fail", reason=repr(error), what="choice")
             self._play_tone(self.s.fail_tone, "fail")
             return
         items, audios, (opening, closing) = value
+        rows = self.config.choice.rows_for(len(items)) if items else []
+        if not rows:
+            # 項目が無いか、項目の数に合う行の位置が無い。画面が移る途中を選択肢と見たことが多い。
+            # 何も読まず、次の画面を待つ（11-07、セーブの画面から戻ったときに止まった）
+            self.s.log("choice_no_rows", items=items)
+            return
         session.items, session.audios = items, audios
-        session.rows = self.config.choice.rows_for(len(items))
+        session.rows = rows
         frame = self.latest_frame if self.latest_frame is not None else session.frame
-        session.selected = self._selected_row(frame, session.rows, 0)  # 選択肢が始まるたびに1行目から
+        # 選択肢が始まるたびに選び直す。はっきり違う行が無ければ、選ばれていない（None）
+        session.selected = self._selected_row(frame, session.rows, None)
         self.row_index = session.selected
         self.row_moved = False
         self.row_armed = False
         session.ready = True
         self.s.log("choice_ready", items=items, selected=session.selected)
         # 音声は項目ごとに作ってあるので、つなぐだけで紹介ができる。待たせない
-        chosen = items[session.selected]
-        session.intro_text = "選択肢。" + "".join(f"{i}。" for i in items) + f"選んでいるのは、{chosen}。"
-        session.intro_audio = np.concatenate([opening, *audios, closing, audios[session.selected]])
+        session.intro_text = "選択肢。" + "".join(f"{i}。" for i in items)
+        parts = [opening, *audios]
+        if session.selected is not None:
+            session.intro_text += f"選んでいるのは、{items[session.selected]}。"
+            parts += [closing, audios[session.selected]]
+        session.intro_audio = np.concatenate(parts)
         if self.speaking == "sentence":
             self.after_speech = lambda: self._say_intro(session)
         else:
@@ -661,7 +680,7 @@ class Director:
                 session.key_target = None  # 画面がキーの行に追いついた。ここからは明るさで追う
             session.candidate = None
             return
-        if index == session.selected:
+        if index is None or index == session.selected:
             session.candidate = None
             return
         # 帯が動く途中のコマで順位が揺れるので、同じ行が2コマ続いたら確定する
@@ -678,9 +697,9 @@ class Director:
         self.s.log("choice_move", selected=index, text=session.items[index])
         self._say(session.items[index], session.audios[index], "choice")
 
-    def _selected_row(self, frame: np.ndarray, rows, previous: int) -> int:
+    def _selected_row(self, frame: np.ndarray, rows, previous: int | None) -> int | None:
         rule = self.config.choice
-        return selected_row(frame, rows, rule.selected, rule.dark_margin, previous)
+        return selected_row(frame, rows, rule.selected, rule.dark_margin, previous, rule.bright_margin)
 
     # 札（字だけを読む画面）
 

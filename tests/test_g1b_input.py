@@ -121,7 +121,8 @@ def test_gate_rows_on_choice_move_and_pick(game_path, style):
     centers = [((b[0] + b[2]) // 2, (b[1] + b[3]) // 2) for b in rows]
     sim.view = synth.View(scene=1, choices=items, hint=CHOICE_HINT, choice_dark=True, selected=-1)
     sim.run(3.0)
-    assert "選んでいるのは、一つ目の項目" in sim.said("choice")[0]
+    # どの行も暗くない（マウスが行の外）なら選ばれていない。11-07 に「1行目を選んでいる」から改めた
+    assert sim.said("choice")[0] == "選択肢。" + "".join(f"{i}。" for i in items)
     for key, hovered in (("down", 0), ("down", 1), ("down", 2), ("up", 1)):
         before = len(sim.said("choice"))
         sim.press("cursor", key)

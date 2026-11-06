@@ -54,7 +54,7 @@ def test_gate_dark_choice_keeps_row_and_starts_from_first(game_path, style):
     items = ["一つ目の項目", "二つ目の項目", "三つ目の項目"]
     sim.view = choice_view(1, items, -1)
     sim.run(3.0)
-    assert sim.events("choice_ready")[0]["selected"] == 0
+    assert sim.events("choice_ready")[0]["selected"] is None  # どの行も暗くなければ選ばれていない（11-07 に改めた）
     sim.view = choice_view(1, items, 2)
     sim.run(0.5)
     assert sim.said("choice")[-1] == "三つ目の項目"
@@ -62,12 +62,12 @@ def test_gate_dark_choice_keeps_row_and_starts_from_first(game_path, style):
     sim.run(0.5)
     assert sim.said("choice")[-1] == "三つ目の項目"
     assert len(sim.events("choice_move")) == 1
-    # 次の選択肢は1行目から
+    # 次の選択肢も選び直す。前の選択肢の行を持ち越さない
     sim.view = synth.View(scene=1, text="間の文です。")
     sim.run(2.0)
     sim.view = choice_view(1, ["別の一つ目", "別の二つ目"], -1)
     sim.run(3.0)
-    assert sim.events("choice_ready")[-1]["selected"] == 0
+    assert sim.events("choice_ready")[-1]["selected"] is None
 
 
 def test_dark_needs_margin(game_path):
