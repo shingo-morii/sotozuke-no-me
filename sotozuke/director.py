@@ -31,7 +31,6 @@ CHECKING_EXTRA_S = 1.5    # 読み手が確認に入ったら、知らせる音�
 TAG_RECHECK_S = 0.35      # 声ありと判定した文は、前の文の札が残っていただけかをこのあと見直す
 SAME_AGAIN_S = 1.6        # キーのあとこの時間たっても字が同じなら、同じ文がまた出たと見なす
 ROW_READ_S = 0.35         # 本体がマウスを行に乗せてから、その行の箱を読むまで。乗せた光が出るのを待つ
-ROW_HOLD_S = 0.6          # 本体が選択肢の行に乗せたあと、明るさで選ばれている行を決め直さない間
 NO_TEXT_ROW = "字がありません。"
 
 
@@ -103,7 +102,9 @@ class ChoiceSession:
     moved: bool = False
     ready: bool = False
     closing: bool = False
-    hold_until: float = 0.0   # 本体が行に乗せた直後は、画面の光が移り終わるまで明るさで決め直さない
+    # キーで乗せた行。画面の明るさで決めた行がこれと1度合うまで、明るさで上書きしない。
+    # ゲームの光が移るのが遅いと、古い画面の行でキーの行を戻してしまうため（11-06、1本目で見つけた）
+    key_target: int | None = None
 
 
 @dataclass
@@ -293,7 +294,7 @@ class Director:
             session.selected = index
             session.candidate = None
             session.moved = True
-            session.hold_until = self.s.clock() + ROW_HOLD_S
+            session.key_target = index
             self.s.log("choice_move", selected=index, text=session.items[index], by="key")
             self._say(session.items[index], session.audios[index], "choice")
             return
@@ -306,7 +307,7 @@ class Director:
         if frame is None or generation != self.generation:
             return
         image = crop(frame, box).copy()
-        key = hashlib.md5(np.packbits(glyph_mask(to_gray(image), self.config.glyph)).tobytes()).hexdigest()
+        key = row_key(image, box)
         cached = self.row_texts.get(key)
         if cached:
             self.s.log("row_cached", text=cached[0])
@@ -628,9 +629,14 @@ class Director:
 
     def _track_choice(self, frame: np.ndarray) -> None:
         session = self.choice
-        if session.closing or self.s.clock() < session.hold_until:
+        if session.closing:
             return
         index = self._selected_row(frame, session.rows, session.selected)
+        if session.key_target is not None:
+            if index == session.key_target:
+                session.key_target = None  # 画面がキーの行に追いついた。ここからは明るさで追う
+            session.candidate = None
+            return
         if index == session.selected:
             session.candidate = None
             return
@@ -969,6 +975,15 @@ def speakable(text: str) -> str:
     if len(text) >= 4 and len(set(text)) == 1:
         return "無言。"
     return text
+
+
+def row_key(image: np.ndarray, box) -> str:
+    """行の箱を覚える鍵。箱の位置と絵の明るさの全部の画素が同じときだけ同じになる。
+
+    字の形（字の点）で覚えると、字と地の明るさが近い箱はどれも空の形になり、
+    同じ大きさの別のボタン（Cancel と OK）を同じと見た（11-06、1本目で見つけた）。
+    """
+    return hashlib.md5(str(tuple(box)).encode("ascii") + to_gray(image).tobytes()).hexdigest()
 
 
 def _center(box) -> tuple[int, int]:

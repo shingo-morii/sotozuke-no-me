@@ -125,3 +125,101 @@ def test_gate_readme_and_skill_have_the_new_notes():
     assert "通知を切る" in readme
     skill = (ROOT / ".claude" / "skills" / "add-game" / "SKILL.md").read_text(encoding="utf-8")
     assert "本体の記録に `key` が出るか" in skill
+
+
+# F2 の関門
+
+
+def dark_choice_game(path):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["input"] = {"choice": {"keys": False, "rows": "choice"}}
+    data["choice"]["selected"] = "dark"
+    data["choice"]["dark_margin"] = 40
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return load_config(path)
+
+
+def dark_view(items, selected):
+    return synth.View(scene=1, choices=items, selected=selected, hint=CHOICE_HINT, choice_dark=True)
+
+
+def test_gate_keys_on_choice_are_not_overwritten_by_a_late_picture(game_path, style):
+    """ゲームの光がキーから1秒遅れて移る。下、下、下、上、上、上で、乗せた行は1、2、3、2、1、1行目。"""
+    config = dark_choice_game(game_path)
+    sim = Sim(style, config)
+    items = ["一つ目の項目", "二つ目の項目", "三つ目の項目"]
+    rows = config.choice.rows_for(3)
+    centers = [((b[0] + b[2]) // 2, (b[1] + b[3]) // 2) for b in rows]
+    sim.view = dark_view(items, -1)
+    sim.run(3.0)
+    for key, row in (("down", 0), ("down", 1), ("down", 2), ("up", 1), ("up", 0), ("up", 0)):
+        before = len(sim.said("choice"))
+        sim.press("cursor", key)
+        assert sim.sent[-1].at == centers[row], (key, row)
+        sim.run(1.0)  # ゲームはまだ前の行を暗くしている
+        sim.view = dark_view(items, row)
+        sim.run(1.0)
+        assert sim.said("choice")[before:] == [items[row]], (key, row)
+    assert all(e.get("by") == "key" for e in sim.events("choice_move"))
+    # 合ったあとは、利用者がマウスで動かした行を明るさで追う
+    sim.view = dark_view(items, 2)
+    sim.run(1.0)
+    assert sim.said("choice")[-1] == items[2]
+
+
+def test_key_row_stays_when_the_picture_never_follows(game_path, style):
+    sim = Sim(style, dark_choice_game(game_path))
+    items = ["一つ目の項目", "二つ目の項目", "三つ目の項目"]
+    sim.view = dark_view(items, 2)  # ゲームは3行目を暗くしたまま動かない
+    sim.run(3.0)
+    for key in ("down", "down"):
+        sim.press("cursor", key)
+        sim.run(2.0)
+    assert sim.said("choice")[-1] == items[1]
+    assert sim.director.row_index == 1
+
+
+def test_gate_buttons_without_glyph_points_get_different_keys():
+    """字と地の明るさが近い同じ大きさの2つのボタン。字の点は取れないが、別のものとして覚える。"""
+    import hashlib
+
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    from sotozuke.director import row_key
+    from sotozuke.game_config import GlyphRule
+    from sotozuke.image_ops import glyph_mask, to_gray
+
+    def button(text):
+        image = Image.new("RGB", (120, 40), (150, 150, 160))
+        ImageDraw.Draw(image).text((60, 20), text, font=synth.font(22), fill=(175, 175, 185), anchor="mm")
+        return np.asarray(image)
+
+    ok, cancel = button("OK"), button("Cancel")
+    box = (10, 10, 130, 50)
+    old = [hashlib.md5(np.packbits(glyph_mask(to_gray(b), GlyphRule())).tobytes()).hexdigest() for b in (ok, cancel)]
+    assert old[0] == old[1]  # 前の鍵では同じになった
+    assert row_key(ok, box) != row_key(cancel, box)
+    assert row_key(ok, box) == row_key(ok.copy(), box)  # まったく同じ絵は覚えを使う
+    assert row_key(ok, box) != row_key(ok, (20, 10, 140, 50))  # 箱が違えば別
+
+
+def test_gate_ok_and_cancel_are_read_separately(game_path, style):
+    data = json.loads(game_path.read_text(encoding="utf-8"))
+    w = style.size[0]
+    boxes = [[w // 4, 200 + i * 56 - 22, w * 3 // 4, 200 + i * 56 + 22] for i in range(2)]
+    data["input"] = {"セーブ": {"keys": False, "rows": boxes, "pick": "f9"}}
+    game_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    sim = Sim(style, load_config(game_path))
+    calls = counting_reader(sim)
+    view = lambda selected: synth.View(scene=1, hint=SAVE_HINT, menu_title="確認",  # noqa: E731
+                                       menu_items=["Cancel", "OK"], selected=selected)
+    sim.view = view(-1)
+    sim.run(3.0)
+    entered = len(sim.said("screen"))
+    for key, row in (("down", 0), ("down", 1), ("up", 0), ("down", 1)):
+        sim.press("cursor", key)
+        sim.view = view(row)
+        sim.run(2.0)
+    assert sim.said("screen")[entered:] == ["箱1", "箱2", "箱1", "箱2"]
+    assert len(calls) == 2
