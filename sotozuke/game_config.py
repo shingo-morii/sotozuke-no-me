@@ -51,6 +51,7 @@ class TextRule:
     typed: bool = True
     min_pixels: int = 40         # これより字の点が少なければ空
     ignore: tuple[str, ...] = ()  # 本文の帯に出ても読まない字（読み込みの案内など）
+    end_marks: str = ""          # 文の終わりの「次へ」の印。読み手が字として返したら、終わりの1字を外す
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,8 @@ class SceneRule:
     min_dark_s: float = 0.3
     settle_frames: int = 3
     settle_diff: float = 6.0
+    # 暗転も白飛びも通らないゲーム。0より大きければ、文が出るたびに前の文のときの絵と比べ、差がこれ以上なら場面とする
+    text_diff: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -93,6 +96,8 @@ class ChoiceRule:
     box: Box                         # 全項目が入る範囲
     rows_by_count: dict[int, list[Box]] = field(default_factory=dict)
     strip_label: bool = True
+    selected: str = "bright"         # 選ばれている行。bright は明るい行、dark は暗い行（乗せると暗くなるゲーム）
+    dark_margin: float = 0.0         # dark のとき、ほかの行よりこれだけ暗い行が無ければ前の行のまま
 
     def rows_for(self, count: int) -> list[Box]:
         """項目の数ごとの行の位置。知らない数は、知っている2つの数から伸ばして求める。"""
@@ -204,7 +209,13 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
             choice = ChoiceRule(
                 box=_box(raw["box"], "choice.box", size), rows_by_count=rows,
                 strip_label=bool(raw.get("strip_label", True)),
+                selected=raw.get("selected", "bright"),
+                dark_margin=float(raw.get("dark_margin", 0.0)),
             )
+            if choice.selected not in ("bright", "dark"):
+                raise ConfigError(f"choice.selected は bright か dark: {choice.selected}")
+            if choice.selected == "dark" and choice.dark_margin <= 0:
+                raise ConfigError("choice.selected が dark なら dark_margin を測って書く")
 
         walk = None
         if data.get("walk"):

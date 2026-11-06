@@ -109,10 +109,21 @@ class ScreenState:
     audio: np.ndarray | None = None
 
 
-def selected_row(frame: np.ndarray, rows: list[tuple[int, int, int, int]]) -> int:
-    """行の明るさの1位を選ばれている行とする。閾値で決めると背景で外れる。"""
+def selected_row(frame: np.ndarray, rows: list[tuple[int, int, int, int]],
+                 mode: str = "bright", margin: float = 0.0, previous: int = 0) -> int:
+    """行の明るさの1位を選ばれている行とする。閾値で決めると背景で外れる。
+
+    乗せると暗くなるゲームは、ほかの行よりはっきり暗い行を選ぶ。マウスが行から外れると
+    どの行も同じ明るさになるので、そのときは前の行のままにする。
+    """
     levels = [float(to_gray(crop(frame, box)).mean()) for box in rows]
-    return int(np.argmax(levels))
+    if mode != "dark":
+        return int(np.argmax(levels))
+    darkest = int(np.argmin(levels))
+    others = [v for i, v in enumerate(levels) if i != darkest]
+    if others and min(others) - levels[darkest] >= margin:
+        return darkest
+    return min(previous, len(rows) - 1)
 
 
 class Director:
@@ -135,6 +146,7 @@ class Director:
         self.tag_recheck_at: float | None = None
         self.same_check_at: float | None = None
         self.text_since_scene = True
+        self.text_sample: np.ndarray | None = None  # 文ごとの場面の比べに使う、前の文のときの絵
         self.after_speech: Callable[[], None] | None = None
         self.screen_cache: dict[tuple[str, bool, str], tuple[str, str, np.ndarray]] = {}
         self.walk = WalkGuide(config.walk, self) if config.walk else None
@@ -210,6 +222,9 @@ class Director:
     # 文
 
     def _on_text(self, event: TextReady) -> None:
+        rule = self.config.scene
+        if rule is not None and rule.text_diff > 0:
+            self._scene_by_text(event, rule.box, rule.text_diff)
         self.band = event.band
         self.spoken = None
         self.same_check_at = None
@@ -248,7 +263,7 @@ class Director:
             result = self.s.reader.read_text(band, on_check=checking)
             if not result.text:
                 return None
-            text = speakable(result.text)
+            text = speakable(strip_end_mark(result.text, self.config.text.end_marks))
             return text, self.s.speech(text)
 
         self.s.log("read_start", generation=generation)
@@ -307,6 +322,25 @@ class Director:
         self._say(text, audio, "sentence")
 
     # 場面
+
+    def _scene_by_text(self, event: TextReady, box, limit: float) -> None:
+        """暗転も白飛びも通らない場面の切り替わり。文が出るたびに、前の文のときの絵と比べる。
+
+        比べる絵は、文でない画面を通っても捨てない。捨てると、選択肢のあとに同じ場面をもう一度説明する。
+        ロードやタイトルからの始め直しは絵が変わるので説明される。
+        """
+        frame = event.frame if event.frame is not None else self.latest_frame
+        if frame is None:
+            return
+        sample = small_gray(frame, box).astype(np.int16)
+        before, self.text_sample = self.text_sample, sample
+        # 始めて最初の文は、比べる絵が無いので場面とする
+        diff = float(np.abs(sample - before).mean()) if before is not None else float("inf")
+        if diff < limit:
+            return
+        self.s.log("scene_by_text", diff=round(diff, 1) if before is not None else None)
+        self.text_since_scene = True  # 文が出たので、映像の区間ではない
+        self._on_dawn(SceneDawn(event.t, frame))
 
     def _on_dawn(self, event: SceneDawn) -> None:
         if event.kind != TEXT_KIND or self.config.scene is None:
@@ -431,7 +465,7 @@ class Director:
         session.items, session.audios = items, audios
         session.rows = self.config.choice.rows_for(len(items))
         frame = self.latest_frame if self.latest_frame is not None else session.frame
-        session.selected = selected_row(frame, session.rows)
+        session.selected = self._selected_row(frame, session.rows, 0)  # 選択肢が始まるたびに1行目から
         session.ready = True
         self.s.log("choice_ready", items=items, selected=session.selected)
         # 音声は項目ごとに作ってあるので、つなぐだけで紹介ができる。待たせない
@@ -451,7 +485,7 @@ class Director:
         session = self.choice
         if session.closing:
             return
-        index = selected_row(frame, session.rows)
+        index = self._selected_row(frame, session.rows, session.selected)
         if index == session.selected:
             session.candidate = None
             return
@@ -466,6 +500,10 @@ class Director:
         self.after_speech = None
         self.s.log("choice_move", selected=index, text=session.items[index])
         self._say(session.items[index], session.audios[index], "choice")
+
+    def _selected_row(self, frame: np.ndarray, rows, previous: int) -> int:
+        rule = self.config.choice
+        return selected_row(frame, rows, rule.selected, rule.dark_margin, previous)
 
     # 札（字だけを読む画面）
 
@@ -643,7 +681,8 @@ class Director:
 
         def work():
             result = self.s.reader.read_text(band)
-            return (result.text, self.s.speech(result.text)) if result.text else None
+            text = strip_end_mark(result.text, self.config.text.end_marks)
+            return (text, self.s.speech(text)) if text else None
 
         self.s.tasks.submit(work, lambda v, e: self._on_sentence(generation, v, e))
 
@@ -665,7 +704,9 @@ class Director:
             self._describe_view()
             return
         scene = self.scene
-        if self.last_description is not None and (scene is None or scene.state != "generating"):
+        # 場面の見分けが無いゲームでは、前の説明は今の画面の説明とは限らない。押すたびに今の画面を説明する
+        fresh = self.config.scene is None
+        if not fresh and self.last_description is not None and (scene is None or scene.state != "generating"):
             text, audio = self.last_description
             self._say(text, audio, "description")
             return
@@ -761,6 +802,17 @@ class Director:
         if not self.s.sound.playing:
             self.speaking = None
             self.s.sound.play(tone)
+
+
+def strip_end_mark(text: str, marks: str) -> str:
+    """文の終わりの「次へ」の印を、読み手が字として返すことがある。終わりの1字だけ外す。
+
+    同じ字が続くとき（・・・のような点の文）は印ではないので外さない。
+    """
+    text = text.rstrip()
+    if marks and len(text) >= 2 and text[-1] in marks and text[-2] != text[-1]:
+        return text[:-1].rstrip()
+    return text
 
 
 def speakable(text: str) -> str:

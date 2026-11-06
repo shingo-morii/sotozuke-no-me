@@ -116,7 +116,8 @@ class View:
     visible_chars: int | None = None
     name: str = ""
     choices: list[str] = field(default_factory=list)
-    selected: int = 0
+    selected: int = 0        # -1 ならどの行も選ばれていない（マウスが行から外れた）
+    choice_dark: bool = False  # 乗せた行が暗くなるゲーム
     hint: str = ""
     dark: float = 0.0        # 0 で絵、1 で真っ黒
     white: float = 0.0
@@ -210,9 +211,13 @@ def _draw_choices(style: Style, draw, view: View) -> None:
     rows = choice_rows(style, len(view.choices))
     for i, (box, label) in enumerate(zip(rows, view.choices)):
         selected = i == view.selected
-        fill = (240, 170, 210, 235) if selected else (30, 30, 40, 200)
+        if view.choice_dark:
+            fill = (70, 60, 80, 240) if selected else (200, 190, 210, 240)
+            color = (255, 255, 255) if selected else (40, 30, 50)
+        else:
+            fill = (240, 170, 210, 235) if selected else (30, 30, 40, 200)
+            color = (60, 20, 40) if selected else (255, 255, 255)
         draw.rectangle(box, fill=fill)
-        color = (60, 20, 40) if selected else (255, 255, 255)
         draw.text((box[0] + 24, (box[1] + box[3]) // 2), label,
                   font=font(style.font_px), fill=color, anchor="lm")
 
