@@ -90,5 +90,33 @@ def test_new_items_are_off_in_synthetic_configs(game_path):
     assert_new_items_are_off(load_config(game_path))
 
 
+def test_readme_example_loads(tmp_path):
+    """関門：games/README.md の書き方の例が、そのまま設定として読める。取り込むセッションは README だけを見て書く。"""
+    import synth
+
+    readme = (ROOT / "games" / "README.md").read_text(encoding="utf-8")
+    section = readme.split("## キーで動かないゲームの書き方", 1)[1]
+    example = json.loads(section.split("```json", 1)[1].split("```", 1)[0])
+    path = synth.write_game(synth.STYLES["b"], tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    save = next(s for s in data["screens"] if s["name"] == "セーブ")
+    data["screens"].append({**save, "name": "タイトル"})
+    data.update(example)
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    config = load_config(path)
+    assert config.tag.read_name is True
+    assert config.text.end_marks == "▼"
+    assert (config.choice.selected, config.choice.dark_margin) == ("dark", 12)
+    assert config.scene.text_diff == 20
+    assert set(config.input) == {"text", "choice", "セーブ", "タイトル"}
+    assert config.input["text"].actions["f9"].as_kind == "advance"
+    assert config.input["セーブ"].actions["backspace"].button == "right"
+    assert config.input_keys() == {"f9", "f10", "f11", "f12", "delete", "backspace"}
+    for word in ("tag.read_name", "text.end_marks", "choice.selected", "dark_margin", "scene.text_diff", "lbutton",
+                 "`keys`", "`actions`", "`do`", "`at`", "`button`", "`amount`", "`as`", "`rows`", "`prev`", "`next`",
+                 "`pick`", "行を選んでください。", "字がありません。", "## 対応表に使えるキー", "本体の記録"):
+        assert word in readme, word
+
+
 if __name__ == "__main__":
     _write_before(sys.argv[1:])
