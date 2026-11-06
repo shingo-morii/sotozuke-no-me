@@ -65,6 +65,7 @@ class TagRule:
     contrast: int = 25
     box: Box | None = None       # 札の字の位置を字の形で見るとき
     min_glyphs: int = 0          # 札の字の点の数がこれ以上なら札がある
+    read_name: bool = False      # 札のある文で札の字も読み、「名前。本文」と読む。box が要る
 
 
 @dataclass(frozen=True)
@@ -176,6 +177,8 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
             if tag_raw.get("box") is not None:
                 tag_raw["box"] = _box(tag_raw["box"], "tag.box", size)
             tag = TagRule(**tag_raw)
+            if tag.read_name and tag.box is None:
+                raise ConfigError("tag.read_name には札の字の位置 tag.box が要ります")
         if voice_rule == "tag" and tag is None:
             raise ConfigError("voice_rule が tag なのに tag の設定がありません")
 

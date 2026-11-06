@@ -86,6 +86,7 @@ class FakeResult:
     text: str
     seconds: float = 0.0
     usd: float = 0.0
+    name: str = ""
 
 
 class FakeReader:
@@ -96,6 +97,8 @@ class FakeReader:
         self.describe_calls = 0
         self.items_calls = 0
         self.other_calls = 0
+        self.name_calls = 0
+        self.truth_name: Callable[[], str] = lambda: ""
         self.truth_text: Callable[[], str] = lambda: ""
         self.truth_items: Callable[[], list[str]] = lambda: []
         self.fail_next = 0
@@ -106,12 +109,16 @@ class FakeReader:
             self.fail_next -= 1
             raise RuntimeError("読み手の失敗の模擬")
 
-    def read_text(self, band, on_check=None) -> FakeResult:
+    def read_text(self, band, on_check=None, name_image=None) -> FakeResult:
         self.text_calls += 1
         self._check()
         if self.checking and on_check:
             on_check()
-        return FakeResult(self.truth_text())
+        result = FakeResult(self.truth_text())
+        if name_image is not None:
+            self.name_calls += 1
+            result.name = self.truth_name()
+        return result
 
     def read_items(self, area):
         self.items_calls += 1
@@ -171,6 +178,7 @@ class Sim:
         self.view = synth.View(scene=1)
         self.reader.truth_text = lambda: self.view.text
         self.reader.truth_items = lambda: list(self.view.choices)
+        self.reader.truth_name = lambda: self.view.name
 
         def speech(text: str) -> np.ndarray:
             # 1字0.1秒の長さの音と見なす

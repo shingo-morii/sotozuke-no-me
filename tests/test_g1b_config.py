@@ -76,6 +76,8 @@ def test_gate_base_config_reads_the_same(name):
 def assert_new_items_are_off(config) -> None:
     """G1b で足した項目が、書いていない設定では全部切になっていること。フェイズごとに足す。"""
     assert config.text.end_marks == ""
+    if config.tag is not None:
+        assert config.tag.read_name is False
     if config.choice is not None:
         assert config.choice.selected == "bright"
     if config.scene is not None:

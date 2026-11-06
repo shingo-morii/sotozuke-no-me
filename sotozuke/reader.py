@@ -31,6 +31,10 @@ PROMPT_TEXT = (
     "改行はつなげてください。説明、引用符、飾りは付けないでください。"
     "点だけの文は「……」と返してください。字がなければ「なし」とだけ返してください。"
 )
+PROMPT_NAME = (
+    "画像はノベルゲームの名前の札です。書かれている名前の字だけを返してください。"
+    "字がなければ「なし」とだけ返してください。"
+)
 PROMPT_ITEMS = (
     "画像はノベルゲームの選択肢です。各項目の字を、上から順に JSON の文字列の配列だけで返してください。"
     "項目の先頭の記号や A、B のような印は含めないでください。ほかの文は書かないでください。"
@@ -104,6 +108,7 @@ class ReadResult:
     model: str
     input_tokens: int = 0
     output_tokens: int = 0
+    name: str = ""  # 札の字も頼んだときの名前
 
 
 def clean_text(raw: str) -> str:
@@ -255,11 +260,21 @@ class ClaudeReader:
         result.text = clean_text(result.text)
         return result
 
-    def read_text(self, band: np.ndarray, on_check=None) -> ReadResult:
+    def read_name(self, image: np.ndarray) -> ReadResult:
+        """名前の札の字を読む。字が無ければ空にする。"""
+        result = self.ask(image, PROMPT_NAME, TEXT_MODEL, "name", thinking=NO_THINKING)
+        result.text = clean_text(result.text).strip("「」『』:：")
+        if is_no_text(result.text):
+            result.text = ""
+        return result
+
+    def read_text(self, band: np.ndarray, on_check=None, name_image: np.ndarray | None = None) -> ReadResult:
         """本文を読む。そのままと拡大の2通りで同時に読み、割れたら Sonnet に決めてもらう。
 
         Haiku は文の2%ほどで1字読み違えるが、どちらで間違えるかは文によって違う。
+        name_image を渡すと、札の字も同時に読んで result.name に入れる。
         """
+        named = self.pool.submit(self.read_name, name_image) if name_image is not None else None
         plain = self.pool.submit(self._read_once, band, "text")
         large = self.pool.submit(self._read_once, enlarge(band), "text_large")
         first, second = plain.result(), large.result()
@@ -275,6 +290,10 @@ class ClaudeReader:
             result.text = clean_text(result.text)
             usd += result.usd
             seconds += result.seconds
+        if named is not None:
+            name = named.result()
+            result.name = name.text
+            usd += name.usd
         result.usd, result.seconds = usd, seconds
         if is_no_text(result.text):
             result.text = ""

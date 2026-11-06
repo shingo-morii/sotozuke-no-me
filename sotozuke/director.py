@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
@@ -16,7 +17,7 @@ import numpy as np
 
 from . import reader as prompts
 from .game_config import GameConfig, ScreenRule
-from .image_ops import crop, fingerprint, small_gray, to_gray
+from .image_ops import crop, fingerprint, glyph_mask, small_gray, to_gray
 from .inputs import Command
 from .walk import WalkGuide
 from .watcher import (KindChanged, SceneDawn, ScreenSettled, TEXT_KIND, TextReady, Watcher,
@@ -149,6 +150,7 @@ class Director:
         self.text_sample: np.ndarray | None = None  # 文ごとの場面の比べに使う、前の文のときの絵
         self.after_speech: Callable[[], None] | None = None
         self.screen_cache: dict[tuple[str, bool, str], tuple[str, str, np.ndarray]] = {}
+        self.names: dict[str, str] = {}  # 札の字の形ごとに読んだ名前。同じ札は読み直さない
         self.walk = WalkGuide(config.walk, self) if config.walk else None
 
     @property
@@ -259,15 +261,44 @@ class Director:
         def checking():
             self.s.tasks.post(lambda: self._extend_deadline(generation))
 
+        key, tag_image = self._name_tag()
+        known = self.names.get(key) if key is not None else None
+        learned: dict[str, str] = {}
+
         def work():
-            result = self.s.reader.read_text(band, on_check=checking)
+            name = known
+            if key is not None and known is None:
+                result = self.s.reader.read_text(band, on_check=checking, name_image=tag_image)
+                name = learned[key] = result.name
+            else:
+                result = self.s.reader.read_text(band, on_check=checking)
             if not result.text:
                 return None
-            text = speakable(strip_end_mark(result.text, self.config.text.end_marks))
+            body = speakable(strip_end_mark(result.text, self.config.text.end_marks))
+            text = self._with_name(key, name or "", body)
             return text, self.s.speech(text)
 
+        def done(value, error):
+            self.names.update(learned)  # 1本の流れで覚える
+            self._on_sentence(generation, value, error)
+
         self.s.log("read_start", generation=generation)
-        self.s.tasks.submit(work, lambda value, error: self._on_sentence(generation, value, error))
+        self.s.tasks.submit(work, done)
+
+    def _name_tag(self) -> tuple[str | None, np.ndarray | None]:
+        """札の字も読むゲームで、今の画面に札があれば、札の字の形の印と札の絵を返す。"""
+        tag = self.config.tag
+        frame = self.latest_frame
+        if tag is None or not tag.read_name or frame is None or not has_name_tag(frame, self.config):
+            return None, None
+        image = crop(frame, tag.box).copy()
+        mask = glyph_mask(to_gray(image), self.config.glyph)
+        return hashlib.md5(np.packbits(mask).tobytes()).hexdigest(), image
+
+    def _with_name(self, key: str | None, name: str, body: str) -> str:
+        if key is None or not name or body in self.config.text.ignore:
+            return body
+        return f"{name}。{body}"
 
     def _extend_deadline(self, generation: int) -> None:
         if self.pending and self.pending.generation == generation:
