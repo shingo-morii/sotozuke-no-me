@@ -112,7 +112,8 @@ def test_gate_advance_stops_speech_before_sending(game_path, style):
 
 
 def test_gate_rows_on_choice_move_and_pick(game_path, style):
-    """選択肢で、下へ2回、上へ1回、決めるで、乗せた行と押した行が合う。"""
+    """選択肢で、下へ3回、上へ1回、決めるで、乗せた行と押した行が合う。最初の下は1行目に乗せる。
+    すでに選ばれている行に乗せても、乗せるたびにその項目を読む。"""
     config = mouse_game(game_path)
     sim = Sim(style, config)
     items = ["一つ目の項目", "二つ目の項目", "三つ目の項目"]
@@ -121,15 +122,17 @@ def test_gate_rows_on_choice_move_and_pick(game_path, style):
     sim.view = synth.View(scene=1, choices=items, hint=CHOICE_HINT, choice_dark=True, selected=-1)
     sim.run(3.0)
     assert "選んでいるのは、一つ目の項目" in sim.said("choice")[0]
-    for key, hovered in (("down", 1), ("down", 2), ("up", 1)):
+    for key, hovered in (("down", 0), ("down", 1), ("down", 2), ("up", 1)):
+        before = len(sim.said("choice"))
         sim.press("cursor", key)
         assert sim.sent[-1].do == "move" and sim.sent[-1].at == centers[hovered]
+        assert sim.said("choice")[before:] == [items[hovered]]  # キーのすぐあとに1回だけ読む
         sim.view.selected = hovered  # ゲームは乗せた行を暗くする
-        sim.run(0.5)
-        assert sim.said("choice")[-1] == items[hovered]
+        sim.run(1.0)
+        assert sim.said("choice")[before:] == [items[hovered]]  # 光が移っても読み直さない
     sim.press("advance", "enter")
     assert sim.sent[-1].do == "click" and sim.sent[-1].at == centers[1]
-    assert len(sim.sent) == 4
+    assert len(sim.sent) == 5
 
 
 def test_rows_stop_at_the_ends_and_reset_on_new_screen(game_path, style):

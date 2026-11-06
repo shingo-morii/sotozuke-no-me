@@ -30,6 +30,9 @@ KEY_RECENT_S = 1.5        # キーのあとこの間に落ち着いた画面の�
 CHECKING_EXTRA_S = 1.5    # 読み手が確認に入ったら、知らせる音をこれだけ待つ
 TAG_RECHECK_S = 0.35      # 声ありと判定した文は、前の文の札が残っていただけかをこのあと見直す
 SAME_AGAIN_S = 1.6        # キーのあとこの時間たっても字が同じなら、同じ文がまた出たと見なす
+ROW_READ_S = 0.35         # 本体がマウスを行に乗せてから、その行の箱を読むまで。乗せた光が出るのを待つ
+ROW_HOLD_S = 0.6          # 本体が選択肢の行に乗せたあと、明るさで選ばれている行を決め直さない間
+NO_TEXT_ROW = "字がありません。"
 
 
 class Tasks(Protocol):
@@ -100,6 +103,7 @@ class ChoiceSession:
     moved: bool = False
     ready: bool = False
     closing: bool = False
+    hold_until: float = 0.0   # 本体が行に乗せた直後は、画面の光が移り終わるまで明るさで決め直さない
 
 
 @dataclass
@@ -153,6 +157,10 @@ class Director:
         self.screen_cache: dict[tuple[str, bool, str], tuple[str, str, np.ndarray]] = {}
         self.names: dict[str, str] = {}  # 札の字の形ごとに読んだ名前。同じ札は読み直さない
         self.row_index: int | None = None  # 行を選ぶ画面で、本体がマウスを乗せた行
+        self.row_moved = False             # この画面で利用者が行を動かしたか。最初の前後のキーは1行目へ
+        self.row_move: int | None = None   # 今のキーで乗せる行
+        self.row_read: tuple[float, tuple, int] | None = None  # 箱を読む時刻、箱、世代
+        self.row_texts: dict[str, tuple[str, np.ndarray]] = {}  # 箱の字の形ごとに読んだ字。同じ箱は読み直さない
         self.walk = WalkGuide(config.walk, self) if config.walk else None
 
     @property
@@ -204,6 +212,10 @@ class Director:
                 text, audio = scene.held
                 scene.held = None
                 self._say(text, audio, "sentence")
+        if self.row_read is not None and now >= self.row_read[0]:
+            _, box, generation = self.row_read
+            self.row_read = None
+            self._read_row(box, generation)
 
     def on_command(self, command: Command) -> None:
         self.s.log("key", kind=command.kind, source=command.source)
@@ -217,12 +229,15 @@ class Director:
                 self.walk.remember_target(self.latest_frame)
         if command.kind in ("release", "move"):
             return
+        self.row_move = None
         action = self._action_for(command.source)
         kind = command.kind
         if action is not None and action.as_kind:
             kind = action.as_kind
         if kind == "key":  # 対応表にだけあるキー。動きがあれば、画面が変わるのを待って読む
             kind = "cursor" if action is not None else ""
+        if self.row_move is not None:
+            kind = ""  # 行に乗せたことは、送ったあとで本体が読む。画面全体を読み直さない
         handler = {
             "advance": self._on_advance, "cursor": self._on_cursor, "repeat": self._on_repeat,
             "describe": self._on_describe, "stop": self._on_stop,
@@ -231,6 +246,8 @@ class Director:
             handler()  # 文を進めるなら、ここで読み上げを止めてから送る
         if action is not None:
             self._send_for_key(command, action)
+        if self.row_move is not None:
+            self._announce_row(self.row_move)
 
     # ゲームへ送る
 
@@ -254,14 +271,59 @@ class Director:
         if rows:
             if key in (rule.prev, rule.next):
                 step = -1 if key == rule.prev else 1
-                index = 0 if self.row_index is None else self.row_index + step
+                # この画面で最初の前後のキーは1行目に乗せる。前の行から1つ動かすと1行目を飛ばす
+                index = self.row_index + step if self.row_moved and self.row_index is not None else 0
                 self.row_index = max(0, min(len(rows) - 1, index))
+                self.row_moved = True
+                self.row_move = self.row_index
                 return MouseAction("move", _center(rows[self.row_index]))
             if key == rule.pick:
                 if self.row_index is None:
                     return None
                 return MouseAction("click", _center(rows[self.row_index]))
         return rule.actions.get(key)
+
+    def _announce_row(self, index: int) -> None:
+        """本体が乗せた行を、同じ行でも毎回読む。選択肢は項目の字、ほかは行の箱を読み手で読む。"""
+        rule = self._input_rule()
+        self._next_generation()
+        self.after_speech = None
+        if rule is not None and rule.rows == "choice":
+            session = self.choice
+            session.selected = index
+            session.candidate = None
+            session.moved = True
+            session.hold_until = self.s.clock() + ROW_HOLD_S
+            self.s.log("choice_move", selected=index, text=session.items[index], by="key")
+            self._say(session.items[index], session.audios[index], "choice")
+            return
+        self._stop_sound()
+        box = tuple(self._input_rows(rule)[index])
+        self.row_read = (self.s.clock() + ROW_READ_S, box, self.generation)
+
+    def _read_row(self, box, generation: int) -> None:
+        frame = self.latest_frame
+        if frame is None or generation != self.generation:
+            return
+        image = crop(frame, box).copy()
+        key = hashlib.md5(np.packbits(glyph_mask(to_gray(image), self.config.glyph)).tobytes()).hexdigest()
+        cached = self.row_texts.get(key)
+        if cached:
+            self.s.log("row_cached", text=cached[0])
+            self._on_screen_text(generation, cached, None)
+            return
+
+        def work():
+            text = self.s.reader.read_plain(image, prompts.PROMPT_ROW, "row").text or NO_TEXT_ROW
+            return text, self.s.speech(text)
+
+        def done(value, error):
+            if error is None and value is not None:
+                self.row_texts[key] = value
+            self._on_screen_text(generation, value, error)
+
+        self.s.log("row_read")
+        self.s.tasks.submit(work, done)
 
     def _input_rows(self, rule: InputRule) -> list:
         if rule.rows == "choice":
@@ -500,6 +562,8 @@ class Director:
         self.choice = None
         self.screen = None
         self.row_index = None
+        self.row_moved = False
+        self.row_read = None
         if event.new == "choice":
             self._start_choice(event)
         elif event.new == "card":
@@ -546,6 +610,7 @@ class Director:
         frame = self.latest_frame if self.latest_frame is not None else session.frame
         session.selected = self._selected_row(frame, session.rows, 0)  # 選択肢が始まるたびに1行目から
         self.row_index = session.selected
+        self.row_moved = False
         session.ready = True
         self.s.log("choice_ready", items=items, selected=session.selected)
         # 音声は項目ごとに作ってあるので、つなぐだけで紹介ができる。待たせない
@@ -563,7 +628,7 @@ class Director:
 
     def _track_choice(self, frame: np.ndarray) -> None:
         session = self.choice
-        if session.closing:
+        if session.closing or self.s.clock() < session.hold_until:
             return
         index = self._selected_row(frame, session.rows, session.selected)
         if index == session.selected:
