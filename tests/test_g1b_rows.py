@@ -99,7 +99,7 @@ def test_pick_clicks_the_row_that_was_read(game_path, style):
     sim.run(3.0)
     for key in ("down", "down"):
         sim.press("cursor", key)
-        sim.run(1.0)
+        sim.run(2.0)  # 箱を読み終えるまで待つ。読む前の決めるキーは送らない（F3）
     sim.press("key", "f9")
     rows = menu_rows(style)
     assert sim.sent[-1].do == "click"
@@ -223,3 +223,78 @@ def test_gate_ok_and_cancel_are_read_separately(game_path, style):
         sim.run(2.0)
     assert sim.said("screen")[entered:] == ["箱1", "箱2", "箱1", "箱2"]
     assert len(calls) == 2
+
+
+# F3 の関門：行を読むまで決めるキーを送らない
+
+PICK_FIRST = "行を選んでください。"
+
+
+def choice_rows_game(path, pick="enter"):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["input"] = {"choice": {"keys": False, "rows": "choice", "pick": pick}}
+    data["choice"]["selected"] = "dark"
+    data["choice"]["dark_margin"] = 40
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return load_config(path)
+
+
+def centers_of(config, count):
+    return [((b[0] + b[2]) // 2, (b[1] + b[3]) // 2) for b in config.choice.rows_for(count)]
+
+
+def test_gate_pick_right_after_choice_sends_nothing(game_path, style):
+    config = choice_rows_game(game_path)
+    sim = Sim(style, config)
+    items = ["一つ目の項目", "二つ目の項目", "三つ目の項目"]
+    sim.view = synth.View(scene=1, text="前の文です。")
+    sim.run(2.0)
+    sim.view = dark_view(items, -1)
+    sim.run(3.0)
+    sim.press("advance", "enter")
+    assert sim.sent == []
+    assert sim.said()[-1] == PICK_FIRST
+    assert sim.events("pick_refused")
+    sim.run(1.0)
+    sim.press("cursor", "down")
+    assert sim.said("choice")[-1] == items[0]
+    sim.press("advance", "enter")
+    assert [(a.do, a.at) for a in sim.sent] == [("move", centers_of(config, 3)[0]), ("click", centers_of(config, 3)[0])]
+
+
+def test_gate_pick_after_load_with_a_leftover_dark_row_sends_nothing(game_path, style):
+    """ロードした先が選択肢で、前のマウスの位置で3行目が暗い。決めるキーで押さない。"""
+    sim = Sim(style, choice_rows_game(game_path))
+    items = ["一つ目の項目", "二つ目の項目", "三つ目の項目"]
+    sim.view = synth.View(scene=1, hint=SAVE_HINT, menu_title="ロード", menu_items=ITEMS, selected=0)
+    sim.run(2.0)
+    sim.view = dark_view(items, 2)
+    sim.run(3.0)
+    assert sim.events("choice_ready")[-1]["selected"] == 2
+    for _ in range(3):
+        sim.press("advance", "enter")
+        sim.run(0.5)
+    assert sim.sent == []
+
+
+def test_pick_after_the_user_moves_the_mouse_and_the_row_is_read(game_path, style):
+    config = choice_rows_game(game_path)
+    sim = Sim(style, config)
+    items = ["一つ目の項目", "二つ目の項目", "三つ目の項目"]
+    sim.view = dark_view(items, -1)
+    sim.run(3.0)
+    sim.view = dark_view(items, 1)  # 利用者が自分のマウスで2行目に乗せた
+    sim.run(1.0)
+    assert sim.said("choice")[-1] == items[1]
+    sim.press("advance", "enter")
+    assert [(a.do, a.at) for a in sim.sent] == [("click", centers_of(config, 3)[1])]
+
+
+def test_gate_pick_right_after_entering_box_rows_sends_nothing(game_path, style):
+    sim = Sim(style, box_game(game_path, style))
+    counting_reader(sim)
+    sim.view = save_view(-1)
+    sim.run(3.0)
+    sim.press("key", "f9")
+    assert sim.sent == []
+    assert sim.said()[-1] == PICK_FIRST

@@ -32,6 +32,7 @@ TAG_RECHECK_S = 0.35      # 声ありと判定した文は、前の文の札が�
 SAME_AGAIN_S = 1.6        # キーのあとこの時間たっても字が同じなら、同じ文がまた出たと見なす
 ROW_READ_S = 0.35         # 本体がマウスを行に乗せてから、その行の箱を読むまで。乗せた光が出るのを待つ
 NO_TEXT_ROW = "字がありません。"
+PICK_FIRST = "行を選んでください。"  # 行を読む前の決めるキーには送らず、こう言う
 
 
 class Tasks(Protocol):
@@ -160,6 +161,10 @@ class Director:
         self.row_index: int | None = None  # 行を選ぶ画面で、本体がマウスを乗せた行
         self.row_moved = False             # この画面で利用者が行を動かしたか。最初の前後のキーは1行目へ
         self.row_move: int | None = None   # 今のキーで乗せる行
+        # この画面で本体が行を読み上げたか。読み上げるまでは決めるキーを送らない。
+        # 選択肢が出た直後やロードの直後に、聞いていない行を押さないため（11-06、1本目で見つけた）
+        self.row_armed = False
+        self.pick_refused = False
         self.row_read: tuple[float, tuple, int] | None = None  # 箱を読む時刻、箱、世代
         self.row_texts: dict[str, tuple[str, np.ndarray]] = {}  # 箱の字の形ごとに読んだ字。同じ箱は読み直さない
         self.walk = WalkGuide(config.walk, self) if config.walk else None
@@ -231,6 +236,7 @@ class Director:
         if command.kind in ("release", "move"):
             return
         self.row_move = None
+        self.pick_refused = False
         action = self._action_for(command.source)
         kind = command.kind
         if action is not None and action.as_kind:
@@ -239,6 +245,8 @@ class Director:
             kind = "cursor" if action is not None else ""
         if self.row_move is not None:
             kind = ""  # 行に乗せたことは、送ったあとで本体が読む。画面全体を読み直さない
+        if self.pick_refused:
+            kind = ""  # 送らない決めるキーは、文を進めたことにも、選択肢を閉じたことにもしない
         handler = {
             "advance": self._on_advance, "cursor": self._on_cursor, "repeat": self._on_repeat,
             "describe": self._on_describe, "stop": self._on_stop,
@@ -249,6 +257,8 @@ class Director:
             self._send_for_key(command, action)
         if self.row_move is not None:
             self._announce_row(self.row_move)
+        if self.pick_refused:
+            self._refuse_pick()
 
     # ゲームへ送る
 
@@ -279,7 +289,8 @@ class Director:
                 self.row_move = self.row_index
                 return MouseAction("move", _center(rows[self.row_index]))
             if key == rule.pick:
-                if self.row_index is None:
+                if self.row_index is None or not self.row_armed:
+                    self.pick_refused = True
                     return None
                 return MouseAction("click", _center(rows[self.row_index]))
         return rule.actions.get(key)
@@ -295,6 +306,7 @@ class Director:
             session.candidate = None
             session.moved = True
             session.key_target = index
+            self.row_armed = True
             self.s.log("choice_move", selected=index, text=session.items[index], by="key")
             self._say(session.items[index], session.audios[index], "choice")
             return
@@ -311,6 +323,7 @@ class Director:
         cached = self.row_texts.get(key)
         if cached:
             self.s.log("row_cached", text=cached[0])
+            self.row_armed = True
             self._on_screen_text(generation, cached, None)
             return
 
@@ -321,10 +334,19 @@ class Director:
         def done(value, error):
             if error is None and value is not None:
                 self.row_texts[key] = value
+                if generation == self.generation:
+                    self.row_armed = True
             self._on_screen_text(generation, value, error)
 
         self.s.log("row_read")
         self.s.tasks.submit(work, done)
+
+    def _refuse_pick(self) -> None:
+        self.s.log("pick_refused")
+        self._next_generation()
+        self._stop_sound()
+        self.after_speech = None
+        self._say(PICK_FIRST, self.s.speech(PICK_FIRST), "screen")
 
     def _input_rows(self, rule: InputRule) -> list:
         if rule.rows == "choice":
@@ -564,6 +586,7 @@ class Director:
         self.screen = None
         self.row_index = None
         self.row_moved = False
+        self.row_armed = False
         self.row_read = None
         if event.new == "choice":
             self._start_choice(event)
@@ -612,6 +635,7 @@ class Director:
         session.selected = self._selected_row(frame, session.rows, 0)  # 選択肢が始まるたびに1行目から
         self.row_index = session.selected
         self.row_moved = False
+        self.row_armed = False
         session.ready = True
         self.s.log("choice_ready", items=items, selected=session.selected)
         # 音声は項目ごとに作ってあるので、つなぐだけで紹介ができる。待たせない
@@ -647,6 +671,7 @@ class Director:
         session.candidate = None
         session.selected = index
         self.row_index = index
+        self.row_armed = True  # 利用者が自分のマウスで動かした行を、このあと読む
         session.moved = True
         self._next_generation()
         self.after_speech = None
