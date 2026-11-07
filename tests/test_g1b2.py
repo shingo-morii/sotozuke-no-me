@@ -212,3 +212,206 @@ def test_kind_frames_must_be_positive(game_path):
 
     with pytest.raises(ConfigError):
         edit_game(game_path, lambda d: d.update(kind_frames=0))
+
+
+# H3 歩く画面
+
+
+WALK_HINT = "前後左右 移動  話す  地図  設定"
+MAP_HINT = "上下左右 選択  決定  戻る  設定"
+
+
+def record_reader(sim):
+    """読み手に渡した頼みと、探す頼みの視点を残す。"""
+    from harness import FakeResult
+
+    asked = []
+    plain = sim.reader.read_plain
+    find = sim.reader.find_target
+
+    def read_plain(frame, prompt, purpose):
+        asked.append((purpose, prompt))
+        return plain(frame, prompt, purpose)
+
+    def find_target(frame, target, view="behind"):
+        asked.append(("find", view))
+        return find(frame, target)
+
+    sim.reader.read_plain = read_plain
+    sim.reader.find_target = find_target
+    return asked
+
+
+def walk_game(path, **walk):
+    return edit_game(path, lambda d: d.update(walk={"turn_deg_per_s": 90, "view_deg": 60, **walk}))
+
+
+def test_gate_first_person_describe_does_not_say_protagonist(game_path, style):
+    sim = Sim(style, walk_game(game_path, view="first_person"))
+    asked = record_reader(sim)
+    sim.view = synth.View(scene=2, hint=WALK_HINT)
+    sim.run(3.0)
+    sim.press("describe", "f7")
+    sim.run(2.0)
+    prompts = [p for purpose, p in asked if purpose == "walk_view"]
+    assert prompts and "主人公" not in prompts[-1] and "一人称" in prompts[-1]
+
+
+def test_gate_first_person_search_passes_the_view(game_path, style):
+    sim = Sim(style, walk_game(game_path, view="first_person"))
+    asked = record_reader(sim)
+    sim.view = synth.View(scene=1, hint=MAP_HINT)
+    sim.run(2.0)
+    sim.press("advance")
+    sim.view = synth.View(scene=2, hint=WALK_HINT)
+    sim.run(3.0)
+    assert ("find", "first_person") in asked
+
+
+def test_walk_target_prompt_by_view():
+    from sotozuke import reader as prompts
+
+    behind = prompts.walk_target_prompt("金髪の人", "behind")
+    first = prompts.walk_target_prompt("金髪の人", "first_person")
+    assert "主人公なので数えないで" in behind and "金髪の人" in behind
+    assert "主人公" not in first and "一人称" in first and "金髪の人" in first
+    assert "主人公" in prompts.walk_view_prompt("behind")
+    assert prompts.walk_view_prompt("behind") == prompts.PROMPT_WALK_VIEW  # 書かないときは今の頼みのまま
+
+
+def test_gate_default_view_keeps_the_old_prompt(game_path, style):
+    sim = Sim(style, walk_game(game_path))
+    asked = record_reader(sim)
+    sim.view = synth.View(scene=2, hint=WALK_HINT)
+    sim.run(3.0)
+    sim.press("describe", "f7")
+    sim.run(2.0)
+    from sotozuke import reader as prompts
+    assert [p for purpose, p in asked if purpose == "walk_view"][-1] == prompts.PROMPT_WALK_VIEW
+
+
+def test_walk_view_must_be_known(game_path):
+    import pytest
+    from sotozuke.game_config import ConfigError
+
+    with pytest.raises(ConfigError):
+        walk_game(game_path, view="above")
+
+
+def hint_game(path, style):
+    """案内の字の範囲と点の数。取り込みのときと同じく、字の無い画面と字の出た画面で数えて間に置く。"""
+    from sotozuke.image_ops import crop, glyph_mask, to_gray
+
+    glyph = load_config(path).glyph
+
+    def count(text, t):
+        frame = synth.render(style, walk_with(text), t)
+        return int(glyph_mask(to_gray(crop(frame, style.band)), glyph).sum())
+
+    empty = max(count("", t) for t in (0.0, 2.0, 5.0))
+    shown = min(count("決めるキーで話しかける", t) for t in (0.0, 2.0, 5.0))
+    assert empty < shown
+
+    def change(data):
+        walk = next(s for s in data["screens"] if s["kind"] == "walk")
+        walk["read_box"] = list(style.band)
+        walk["read_min_glyphs"] = (empty + shown) // 2
+    return edit_game(path, change)
+
+
+def walk_with(text=""):
+    return synth.View(scene=2, hint=WALK_HINT, text=text)
+
+
+def test_gate_walk_hint_is_read_once_and_remembered(game_path, style):
+    sim = Sim(style, hint_game(game_path, style))
+    asked = record_reader(sim)
+    sim.view = walk_with()
+    sim.run(3.0)
+    entered = len(sim.said())
+    sim.view = walk_with("決めるキーで話しかける")
+    sim.run(4.0)
+    assert sim.said()[entered:] == ["walk_hintの字"]
+    sim.view = walk_with()  # 消えて
+    sim.run(2.0)
+    sim.view = walk_with("決めるキーで話しかける")  # また出たら、覚えた字を言う
+    sim.run(3.0)
+    assert sim.said()[entered:] == ["walk_hintの字", "walk_hintの字"]
+    assert sum(1 for purpose, _ in asked if purpose == "walk_hint") == 1
+    sim.view = walk_with("右の扉は鍵がかかっている")  # 違う字は読む
+    sim.run(3.0)
+    assert sum(1 for purpose, _ in asked if purpose == "walk_hint") == 2
+
+
+def test_walk_hint_flicker_is_not_said_again(game_path, style):
+    """字が1コマ消えただけなら、もう一度言わない。"""
+    sim = Sim(style, hint_game(game_path, style))
+    sim.view = walk_with()
+    sim.run(3.0)
+    sim.view = walk_with("決めるキーで話しかける")
+    sim.run(3.0)
+    count = len(sim.said())
+    sim.view = walk_with()
+    sim.run(0.2)
+    sim.view = walk_with("決めるキーで話しかける")
+    sim.run(3.0)
+    assert len(sim.said()) == count
+
+
+def test_without_read_box_walk_hint_is_not_read(game_path, style):
+    sim = Sim(style, load_config(game_path))
+    asked = record_reader(sim)
+    sim.view = walk_with()
+    sim.run(3.0)
+    sim.view = walk_with("決めるキーで話しかける")
+    sim.run(4.0)
+    assert not any(purpose == "walk_hint" for purpose, _ in asked)
+
+
+def test_read_box_needs_min_glyphs_and_walk(game_path, style):
+    import pytest
+    from sotozuke.game_config import ConfigError
+
+    def no_min(data):
+        next(s for s in data["screens"] if s["kind"] == "walk")["read_box"] = list(style.band)
+
+    def not_walk(data):
+        menu = next(s for s in data["screens"] if s["kind"] == "menu")
+        menu["read_box"], menu["read_min_glyphs"] = list(style.band), 40
+
+    for change in (no_min, not_walk):
+        with pytest.raises(ConfigError):
+            edit_game(game_path, change)
+
+
+def describe_twice(sim):
+    sim.view = synth.View(scene=1, text=S[0])
+    sim.run(2.0)
+    sim.press("describe", "f7")
+    sim.run(2.0)
+    sim.press("advance")
+    sim.view = synth.View(scene=2, text=S[1])  # 暗転を通らずに絵が変わった
+    sim.run(2.0)
+    sim.press("describe", "f7")
+    sim.run(2.0)
+    sim.press("describe", "f7")
+    sim.run(2.0)
+    return sim.said("description")
+
+
+def test_gate_describe_current_tells_the_new_picture(game_path, style):
+    sim = Sim(style, edit_game(game_path, lambda d: d["scene"].update(describe="current")))
+    assert describe_twice(sim) == ["説明1", "説明2", "説明2"]
+
+
+def test_gate_describe_last_is_kept_by_default(game_path, style):
+    sim = Sim(style, load_config(game_path))
+    assert describe_twice(sim) == ["説明1", "説明1", "説明1"]
+
+
+def test_scene_describe_must_be_known(game_path):
+    import pytest
+    from sotozuke.game_config import ConfigError
+
+    with pytest.raises(ConfigError):
+        edit_game(game_path, lambda d: d["scene"].update(describe="always"))

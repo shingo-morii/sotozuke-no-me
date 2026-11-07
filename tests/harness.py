@@ -157,7 +157,7 @@ class FakeReader:
         self.other_calls += 1
         return FakeResult(self.target_look)
 
-    def find_target(self, frame, target):
+    def find_target(self, frame, target, view="behind"):
         self.find_calls += 1
         self.last_target = target
         return dict(self.found), FakeResult("")

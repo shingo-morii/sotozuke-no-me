@@ -60,6 +60,12 @@ def _same_as_before(before, now, path="") -> list[str]:
             else:
                 problems += _same_as_before(value, now[key], f"{path}.{key}")
         return problems
+    if isinstance(before, list) and isinstance(now, list) and len(before) == len(now):
+        # 画面の一覧のように、中に項目を持つ並び。1つずつ比べる（11-07、並びの中に項目を足したため）
+        problems = []
+        for i, (a, b) in enumerate(zip(before, now)):
+            problems += _same_as_before(a, b, f"{path}[{i}]")
+        return problems
     return [] if before == now else [f"{path}: {before!r} が {now!r} になった"]
 
 
@@ -82,8 +88,16 @@ def assert_new_items_are_off(config) -> None:
     assert config.input_keys() == set()
     if config.choice is not None:
         assert config.choice.selected == "bright"
+        assert config.choice.bright_margin == 0
     if config.scene is not None:
         assert config.scene.text_diff == 0
+        assert config.scene.describe == "last"
+    assert config.kind_frames == 2
+    for screen in config.screens:
+        assert screen.match != "absent"
+        assert screen.read_box is None
+    if config.walk is not None:
+        assert config.walk.view == "behind"
 
 
 def test_new_items_are_off_in_synthetic_configs(game_path):

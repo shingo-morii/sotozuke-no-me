@@ -151,7 +151,7 @@ class WalkGuide:
             parts.append(self.rule.hint)
         self.target_ready.wait(TARGET_WAIT_S)
         if self.target:
-            data, _ = self.s.reader.find_target(frame, self.target)
+            data, _ = self.s.reader.find_target(frame, self.target, view=self.rule.view)
             parts.append("目当ての人は" + self.words(data, 0.0, self.s.clock()))
         return "".join(parts)
 
@@ -259,7 +259,7 @@ class WalkGuide:
 
         def work():
             if target:
-                data, _ = self.s.reader.find_target(frame, target)
+                data, _ = self.s.reader.find_target(frame, target, view=self.rule.view)
                 found = self.words(data, heading or 0.0, now)
                 text = "目当ての人は" + found if around else found
                 if around:
@@ -267,7 +267,7 @@ class WalkGuide:
                     text += near if near.endswith("。") or not near else near + "。"
             else:
                 from . import reader as prompts
-                text = self.s.reader.read_plain(frame, prompts.PROMPT_WALK_VIEW, "walk_view").text
+                text = self.s.reader.read_plain(frame, prompts.walk_view_prompt(self.rule.view), "walk_view").text
             if around and heading is not None:
                 text += f"いまは{heading_text(heading)}。"
             return (text, self.s.speech(text)) if text else None

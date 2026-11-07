@@ -90,6 +90,32 @@ PROMPT_WALK_TARGET = (
     '"distance": "すぐ前"（1、2歩）か "近い"（数歩）か "中くらい" か "遠い", '
     '"around": "ほかの人物と、進める通路や横の入口の向きを、40字以内の日本語で"}}'
 )
+# 歩く画面の視点。behind は手前に主人公が背中を見せて映る。first_person は一人称で主人公は映らない（11-07）
+BEHIND_VIEW = "画面の手前に背中を見せている人物は操作している主人公です。それ以外の人物が"
+FIRST_PERSON_VIEW = "画面は一人称の視点です。操作している人物自身は画面に映りません。映っている人物が"
+BEHIND_TARGET = "画面の手前で背中を見せている人物は、操作している主人公なので数えないでください。"
+FIRST_PERSON_TARGET = "画面は一人称の視点です。操作している人物自身は画面に映りません。手前に映っている人物も数えてください。"
+PROMPT_HINT = (
+    "画像はゲームの画面の一部で、操作の案内の字です。書かれている字を、読む順にそのまま返してください。"
+    "説明や飾りは付けないでください。字がなければ何も返さないでください。"
+)
+
+
+def walk_view_prompt(view: str) -> str:
+    """歩く画面の説明の頼み。視点で前置きを変える。"""
+    if view == "first_person":
+        return PROMPT_WALK_VIEW.replace(BEHIND_VIEW, FIRST_PERSON_VIEW)
+    return PROMPT_WALK_VIEW
+
+
+def walk_target_prompt(target: str, view: str) -> str:
+    """歩く画面で目当ての人を探す頼み。視点で前置きを変える。"""
+    prompt = PROMPT_WALK_TARGET
+    if view == "first_person":
+        prompt = prompt.replace(BEHIND_TARGET, FIRST_PERSON_TARGET)
+    return prompt.format(target=target)
+
+
 PROMPT_BACKLOG = (
     "画像はゲームの文字の履歴の画面です。いちばん明るく表示されている文だけを、一字も変えずに返してください。"
     "説明や飾りは付けないでください。"
@@ -336,9 +362,9 @@ class ClaudeReader:
             result.text = ""
         return result
 
-    def find_target(self, frame: np.ndarray, target: str) -> tuple[dict, ReadResult]:
+    def find_target(self, frame: np.ndarray, target: str, view: str = "behind") -> tuple[dict, ReadResult]:
         """歩く画面で目当ての人を探す。11/4 に前の通しの絵36枚で比べ、Haiku は別の人を3回取り違えた。"""
-        result = self.ask(frame, PROMPT_WALK_TARGET.format(target=target), PICTURE_MODEL, "walk_find",
+        result = self.ask(frame, walk_target_prompt(target, view), PICTURE_MODEL, "walk_find",
                           max_tokens=1500, extra_body=LOW_EFFORT)
         return parse_object(result.text), result
 

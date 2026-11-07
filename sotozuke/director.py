@@ -17,7 +17,7 @@ import numpy as np
 
 from . import reader as prompts
 from .game_config import GameConfig, InputRule, MouseAction, ScreenRule
-from .image_ops import crop, fingerprint, glyph_mask, small_gray, to_gray
+from .image_ops import crop, fingerprint, glyph_mask, overlap, small_gray, to_gray
 from .inputs import Command
 from .walk import WalkGuide
 from .watcher import (KindChanged, SceneDawn, ScreenSettled, TEXT_KIND, TextReady, Watcher,
@@ -33,6 +33,9 @@ SAME_AGAIN_S = 1.6        # キーのあとこの時間たっても字が同じ�
 ROW_READ_S = 0.35         # 本体がマウスを行に乗せてから、その行の箱を読むまで。乗せた光が出るのを待つ
 NO_TEXT_ROW = "字がありません。"
 PICK_FIRST = "行を選んでください。"  # 行を読む前の決めるキーには送らず、こう言う
+HINT_STABLE_FRAMES = 3    # 歩く画面の案内の字が、これだけ続けて同じ形なら読む
+HINT_SAME = 0.8           # 字の形の重なりがこれ以上なら同じ字
+HINT_GONE_S = 1.0         # 案内の字が消えてこれだけたったら、次に出たときにもう一度言う
 
 
 class Tasks(Protocol):
@@ -177,6 +180,13 @@ class Director:
         self.row_read: tuple[float, tuple, int] | None = None  # 箱を読む時刻、箱、世代
         self.row_texts: dict[str, tuple[str, np.ndarray]] = {}  # 箱の字の形ごとに読んだ字。同じ箱は読み直さない
         self.walk = WalkGuide(config.walk, self) if config.walk else None
+        self.last_description_sample: np.ndarray | None = None  # 前の説明の絵。scene.describe が current のとき比べる
+        # 歩く画面の案内の字（screens の read_box）。覚えた字の形と読んだ字、今出ている字、続けて同じだった枚数
+        self.hint_memory: list[tuple[np.ndarray, str, np.ndarray]] = []
+        self.hint_shown: np.ndarray | None = None
+        self.hint_previous: np.ndarray | None = None
+        self.hint_stable = 0
+        self.hint_gone_since: float | None = None
 
     @property
     def walk_tones(self) -> dict[str, np.ndarray]:
@@ -202,6 +212,9 @@ class Director:
         self._recheck_tag(frame)
         if self.walk and self.watcher.kind == "walk":
             self.walk.step(frame, self.s.clock())
+        screen = self.watcher.screen
+        if self.watcher.kind == "walk" and screen is not None and screen.read_box is not None:
+            self._watch_walk_hint(frame, screen)
         self.tick()
 
     def tick(self) -> None:
@@ -557,6 +570,7 @@ class Director:
     def _scene_ready(self, scene: Scene, text: str, audio: np.ndarray) -> None:
         scene.text, scene.audio = text, audio
         self.last_description = (text, audio)
+        self.last_description_sample = scene.sample
         if scene is not self.scene:
             return
         if not scene.auto or self._in_other_screen():
@@ -597,6 +611,8 @@ class Director:
         self.row_moved = False
         self.row_armed = False
         self.row_read = None
+        self.hint_shown = self.hint_previous = self.hint_gone_since = None
+        self.hint_stable = 0
         if event.new == "choice":
             self._start_choice(event)
         elif event.new == "card":
@@ -812,6 +828,52 @@ class Director:
             return reader.read_plain(frame, prompts.PROMPT_BACKLOG, "backlog").text, title
         return reader.read_plain(frame, prompts.PROMPT_ALL, "screen").text, title
 
+    def _watch_walk_hint(self, frame: np.ndarray, screen: ScreenRule) -> None:
+        """歩く画面に出る操作の案内の字を読む。同じ字が出ている間は読み直さない。
+
+        前は歩く画面で案内の字を読まず、話しかけられることが分からなかった（11-07、3本目で見つけた）。
+        """
+        mask = glyph_mask(to_gray(crop(frame, screen.read_box)), self.config.glyph)
+        now = self.s.clock()
+        if int(mask.sum()) < screen.read_min_glyphs:
+            self.hint_previous, self.hint_stable = None, 0
+            if self.hint_shown is not None:
+                if self.hint_gone_since is None:
+                    self.hint_gone_since = now
+                elif now - self.hint_gone_since >= HINT_GONE_S:
+                    self.hint_shown = self.hint_gone_since = None
+            return
+        self.hint_gone_since = None
+        same = self.hint_previous is not None and overlap(mask, self.hint_previous) >= HINT_SAME
+        self.hint_stable = self.hint_stable + 1 if same else 1
+        self.hint_previous = mask
+        if self.hint_stable < HINT_STABLE_FRAMES:
+            return
+        if self.hint_shown is not None and overlap(mask, self.hint_shown) >= HINT_SAME:
+            return
+        self.hint_shown = mask
+        for known, text, audio in self.hint_memory:
+            if overlap(mask, known) >= HINT_SAME:
+                self.s.log("walk_hint_cached", text=text)
+                self._say(text, audio, "screen")
+                return
+        image = crop(frame, screen.read_box).copy()
+
+        def work():
+            text = self.s.reader.read_plain(image, prompts.PROMPT_HINT, "walk_hint").text
+            return (text, self.s.speech(text)) if text else None
+
+        def done(value, error):
+            if error is not None or value is None:
+                self.s.log("fail", reason=repr(error) if error else "empty", what="walk_hint")
+                return
+            self.hint_memory.append((mask, value[0], value[1]))
+            if self.watcher.kind == "walk":
+                self._say(value[0], value[1], "screen")
+
+        self.s.log("walk_hint_read")
+        self.s.tasks.submit(work, done)
+
     # キー
 
     def _on_advance(self) -> None:
@@ -902,6 +964,12 @@ class Director:
         scene = self.scene
         # 場面の見分けが無いゲームでは、前の説明は今の画面の説明とは限らない。押すたびに今の画面を説明する
         fresh = self.config.scene is None
+        rule = self.config.scene
+        if (not fresh and rule.describe == "current" and self.latest_frame is not None
+                and self.last_description is not None):
+            # 場面の見分けが外れて絵が変わっていたら、前の説明でなく今の画面を説明する（11-07、3本目で見つけた）
+            seen = self.last_description_sample
+            fresh = seen is None or not _same_picture(small_gray(self.latest_frame, rule.box), seen)
         if not fresh and self.last_description is not None and (scene is None or scene.state != "generating"):
             text, audio = self.last_description
             self._say(text, audio, "description")
@@ -917,11 +985,14 @@ class Director:
             result = self.s.reader.describe(frame)
             return result.text, self.s.speech(result.text)
 
+        sample = small_gray(frame, self.config.scene.box) if self.config.scene else None
+
         def done(value, error):
             if error is not None:
                 self._play_tone(self.s.fail_tone, "fail")
                 return
             self.last_description = value
+            self.last_description_sample = sample
             self._say(value[0], value[1], "description")
 
         self.s.tasks.submit(work, done)

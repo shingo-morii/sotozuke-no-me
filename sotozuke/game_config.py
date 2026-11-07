@@ -12,6 +12,8 @@ Box = tuple[int, int, int, int]  # x0, y0, x1, y1。x1 と y1 は含まない
 
 VOICE_RULES = ("tag", "audio", "all")
 MATCHES = ("glyph", "pixel", "absent")
+WALK_VIEWS = ("behind", "first_person")
+SCENE_DESCRIBES = ("last", "current")
 KIND_FRAMES = 2  # 種類が変わったと決めるまで、続けて同じ種類に見えた枚数の既定
 SCREEN_KINDS = (
     "choice",       # 選択肢
@@ -85,6 +87,8 @@ class SceneRule:
     settle_diff: float = 6.0
     # 暗転も白飛びも通らないゲーム。0より大きければ、文が出るたびに前の文のときの絵と比べ、差がこれ以上なら場面とする
     text_diff: float = 0.0
+    # F7 の説明。last は前の場面の説明を言う。current は、前の説明の絵と今の絵が違えば今の画面を説明する
+    describe: str = "last"
 
 
 @dataclass(frozen=True)
@@ -99,6 +103,8 @@ class ScreenRule:
     # glyph は字の形で比べる。pixel は窓の枠など字でないものを画素で比べる。absent は見本（文の枠の一部など）を
     # 画素で比べ、当たらないときにこの画面と見る。決まった字や枠の無い画面（歩く画面）のため。ほかの見本が全部外れたときだけ見る
     match: str = "glyph"
+    read_box: Box | None = None  # 歩く画面で、操作の案内の字が出る範囲。字が出たら読む
+    read_min_glyphs: int = 0     # read_box の字の点がこれ以上なら字がある。測って書く
 
 
 @dataclass(frozen=True)
@@ -140,6 +146,7 @@ class WalkRule:
     bump_diff: float = 1.0        # 歩くキーを押しているのに画面の差がこれ未満なら、止まっている
     hint: str = ""                # 初めて歩く画面に入ったときに言う操作の案内
     target_prompt: str = ""       # 地図で決めたとき、選ばれている人の見た目を聞く頼み
+    view: str = "behind"          # 視点。behind は手前に主人公が映る。first_person は一人称で主人公は映らない
 
 
 MOUSE_DOS = ("move", "click", "wheel")
@@ -237,6 +244,8 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
         if data.get("scene"):
             scene_raw = dict(data["scene"])
             scene = SceneRule(box=_box(scene_raw.pop("box"), "scene.box", size), **scene_raw)
+            if scene.describe not in SCENE_DESCRIBES:
+                raise ConfigError(f"scene.describe は {SCENE_DESCRIBES} のどれか: {scene.describe}")
 
         screens = []
         for i, raw in enumerate(data.get("screens", [])):
@@ -251,7 +260,14 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
                 prompt=raw.get("prompt", ""),
                 prompt_move=raw.get("prompt_move", ""),
                 match=raw.get("match", "glyph"),
+                read_box=_box(raw["read_box"], f"{label}.read_box", size) if raw.get("read_box") else None,
+                read_min_glyphs=int(raw.get("read_min_glyphs", 0)),
             ))
+            if screens[-1].read_box is not None:
+                if screens[-1].kind != "walk":
+                    raise ConfigError(f"{label}: read_box は歩く画面（walk）にだけ書ける")
+                if screens[-1].read_min_glyphs <= 0:
+                    raise ConfigError(f"{label}: read_box には read_min_glyphs を測って書く")
             if screens[-1].match not in MATCHES:
                 raise ConfigError(f"{label}: match は {MATCHES} のどれか: {screens[-1].match}")
 
@@ -280,6 +296,8 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
             if "move_keys" in walk_raw:
                 walk_raw["move_keys"] = tuple(walk_raw["move_keys"])
             walk = WalkRule(**walk_raw)
+            if walk.view not in WALK_VIEWS:
+                raise ConfigError(f"walk.view は {WALK_VIEWS} のどれか: {walk.view}")
 
         inputs = _parse_input(data.get("input", {}), size, screens, choice)
 
