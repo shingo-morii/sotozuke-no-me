@@ -76,6 +76,10 @@ def test_public_check_finds_media():
     assert checker.check_media(["voice.wav"])
     assert not checker.check_media(["tests/synth_media/a.png"])
     assert not checker.check_media(["sotozuke/a.py"])
+    assert not checker.check_media(["games/wife-game2/tpl/a.png"])
+    assert checker.check_media(["games/wife-game2/a.png"])
+    assert checker.check_media(["games/other/tpl/a.png"])
+    assert checker.check_media(["games/wife-game2/tpl/a.wav"])
 
 
 def test_public_check_finds_prework_documents():

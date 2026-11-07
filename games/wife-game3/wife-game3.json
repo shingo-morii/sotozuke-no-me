@@ -1,0 +1,233 @@
+{
+ "name": "game3",
+ "size": [
+  1280,
+  681
+ ],
+ "process": "game3.exe",
+ "voice_rule": "tag",
+ "glyph": {
+  "bright": 200,
+  "dark": 160,
+  "radius": 2
+ },
+ "text": {
+  "band": [
+   95,
+   490,
+   1160,
+   612
+  ],
+  "typed": true,
+  "end_marks": "▼"
+ },
+ "tag": {
+  "kind": "hline",
+  "y": 434,
+  "x0": 120,
+  "x1": 168,
+  "min_cols": 40,
+  "contrast": 25
+ },
+ "scene": {
+  "box": [
+   0,
+   0,
+   1280,
+   430
+  ],
+  "describe": "current"
+ },
+ "screens": [
+  {
+   "name": "選択肢上",
+   "kind": "choice",
+   "box": [
+    358,
+    282,
+    470,
+    444
+   ],
+   "template": "tpl/choice_a.png",
+   "match": "pixel",
+   "threshold": 0.96
+  },
+  {
+   "name": "選択肢下",
+   "kind": "choice",
+   "box": [
+    358,
+    282,
+    470,
+    444
+   ],
+   "template": "tpl/choice_b.png",
+   "match": "pixel",
+   "threshold": 0.96
+  },
+  {
+   "name": "タイトル",
+   "kind": "menu",
+   "box": [
+    540,
+    506,
+    745,
+    536
+   ],
+   "template": "tpl/title.png",
+   "match": "pixel",
+   "threshold": 0.99
+  },
+  {
+   "name": "確認いいえ",
+   "kind": "confirm",
+   "box": [
+    490,
+    350,
+    830,
+    402
+   ],
+   "template": "tpl/confirm_no.png"
+  },
+  {
+   "name": "確認はい",
+   "kind": "confirm",
+   "box": [
+    490,
+    350,
+    830,
+    402
+   ],
+   "template": "tpl/confirm_yes.png"
+  },
+  {
+   "name": "メニュー",
+   "kind": "menu",
+   "box": [
+    585,
+    160,
+    695,
+    198
+   ],
+   "template": "tpl/menu.png"
+  },
+  {
+   "name": "セーブ",
+   "kind": "menu",
+   "box": [
+    595,
+    220,
+    685,
+    256
+   ],
+   "template": "tpl/save.png"
+  },
+  {
+   "name": "ロード",
+   "kind": "menu",
+   "box": [
+    595,
+    220,
+    685,
+    256
+   ],
+   "template": "tpl/load.png"
+  },
+  {
+   "name": "操作の説明",
+   "kind": "card",
+   "box": [
+    560,
+    163,
+    720,
+    201
+   ],
+   "template": "tpl/help.png"
+  },
+  {
+   "name": "暗転",
+   "kind": "loading",
+   "box": [
+    66,
+    470,
+    1210,
+    650
+   ],
+   "template": "tpl/black_box.png",
+   "match": "pixel",
+   "threshold": 0.8
+  },
+  {
+   "name": "歩く",
+   "kind": "walk",
+   "box": [
+    66,
+    600,
+    200,
+    657
+   ],
+   "template": "tpl/textbox.png",
+   "match": "absent",
+   "threshold": 0.9,
+   "read_box": [
+    545,
+    585,
+    735,
+    630
+   ],
+   "read_min_glyphs": 400
+  }
+ ],
+ "choice": {
+  "box": [
+   358,
+   282,
+   922,
+   444
+  ],
+  "rows_by_count": {
+   "2": [
+    [
+     362,
+     288,
+     918,
+     354
+    ],
+    [
+     362,
+     372,
+     918,
+     440
+    ]
+   ]
+  },
+  "selected": "dark",
+  "dark_margin": 20
+ },
+ "keys": {
+  "advance": [
+   "enter",
+   "space"
+  ],
+  "cursor": [
+   "up",
+   "down"
+  ]
+ },
+ "walk": {
+  "move_keys": [
+   "up",
+   "down",
+   "w",
+   "s"
+  ],
+  "turn_left": "left",
+  "turn_right": "right",
+  "turn_deg_per_s": 107,
+  "view_deg": 95,
+  "view": "first_person",
+  "hint": "上で前へ歩く、左右で向きを変える。人の近くで Enter を押すと話す。Esc でメニュー。"
+ },
+ "input": {},
+ "kind_frames": 4
+}

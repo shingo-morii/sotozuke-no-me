@@ -1,0 +1,371 @@
+{
+ "name": "game2",
+ "size": [
+  800,
+  450
+ ],
+ "process": "game2.exe",
+ "voice_rule": "tag",
+ "text": {
+  "band": [
+   105,
+   360,
+   725,
+   425
+  ],
+  "typed": false
+ },
+ "tag": {
+  "kind": "hline",
+  "y": 357,
+  "x0": 98,
+  "x1": 137,
+  "min_cols": 25
+ },
+ "scene": {
+  "box": [
+   0,
+   0,
+   800,
+   340
+  ],
+  "dark_below": 30,
+  "min_dark_s": 0.1
+ },
+ "screens": [
+  {
+   "name": "確認",
+   "kind": "confirm",
+   "box": [
+    320,
+    240,
+    475,
+    265
+   ],
+   "template": "tpl/confirm.png",
+   "match": "pixel",
+   "threshold": 0.99
+  },
+  {
+   "name": "確認",
+   "kind": "confirm",
+   "box": [
+    320,
+    231,
+    475,
+    256
+   ],
+   "template": "tpl/confirm1.png",
+   "match": "pixel",
+   "threshold": 0.99
+  },
+  {
+   "name": "セーブ",
+   "kind": "menu",
+   "box": [
+    20,
+    15,
+    200,
+    65
+   ],
+   "template": "tpl/h_save.png",
+   "match": "pixel",
+   "threshold": 0.99
+  },
+  {
+   "name": "ロード",
+   "kind": "menu",
+   "box": [
+    20,
+    15,
+    200,
+    65
+   ],
+   "template": "tpl/h_load.png",
+   "match": "pixel",
+   "threshold": 0.99
+  },
+  {
+   "name": "ヒストリー",
+   "kind": "card",
+   "box": [
+    20,
+    15,
+    200,
+    65
+   ],
+   "template": "tpl/h_history.png",
+   "match": "pixel",
+   "threshold": 0.99
+  },
+  {
+   "name": "環境設定",
+   "kind": "card",
+   "box": [
+    20,
+    15,
+    200,
+    65
+   ],
+   "template": "tpl/h_settings.png",
+   "match": "pixel",
+   "threshold": 0.99
+  },
+  {
+   "name": "ヘルプ",
+   "kind": "card",
+   "box": [
+    20,
+    15,
+    200,
+    65
+   ],
+   "template": "tpl/h_help.png",
+   "match": "pixel",
+   "threshold": 0.99
+  },
+  {
+   "name": "選択肢",
+   "kind": "choice",
+   "box": [
+    146,
+    113,
+    240,
+    139
+   ],
+   "template": "tpl/choice_u.png",
+   "match": "pixel",
+   "threshold": 0.9
+  },
+  {
+   "name": "選択肢",
+   "kind": "choice",
+   "box": [
+    146,
+    113,
+    240,
+    139
+   ],
+   "template": "tpl/choice_s.png",
+   "match": "pixel",
+   "threshold": 0.9
+  },
+  {
+   "name": "タイトル",
+   "kind": "menu",
+   "box": [
+    330,
+    362,
+    790,
+    415
+   ],
+   "template": "tpl/title_logo.png",
+   "match": "glyph"
+  }
+ ],
+ "choice": {
+  "box": [
+   142,
+   105,
+   658,
+   233
+  ],
+  "rows_by_count": {
+   "3": [
+    [
+     142,
+     109,
+     658,
+     143
+    ],
+    [
+     142,
+     151,
+     658,
+     186
+    ],
+    [
+     142,
+     197,
+     658,
+     231
+    ]
+   ]
+  },
+  "selected": "dark",
+  "dark_margin": 40
+ },
+ "keys": {
+  "advance": [
+   "enter",
+   "space"
+  ],
+  "cursor": [
+   "up",
+   "down",
+   "left",
+   "right"
+  ]
+ },
+ "input": {
+  "text": {
+   "keys": true
+  },
+  "choice": {
+   "keys": true
+  },
+  "タイトル": {
+   "keys": true,
+   "rows": [
+    [
+     18,
+     135,
+     165,
+     163
+    ],
+    [
+     18,
+     166,
+     165,
+     194
+    ],
+    [
+     18,
+     196,
+     165,
+     224
+    ],
+    [
+     18,
+     227,
+     165,
+     255
+    ],
+    [
+     18,
+     257,
+     165,
+     285
+    ],
+    [
+     18,
+     288,
+     165,
+     316
+    ]
+   ],
+   "prev": "f9",
+   "next": "f10",
+   "pick": "f12"
+  },
+  "確認": {
+   "keys": true
+  },
+  "セーブ": {
+   "keys": false,
+   "rows": [
+    [
+     231,
+     126,
+     400,
+     251
+    ],
+    [
+     410,
+     126,
+     579,
+     251
+    ],
+    [
+     588,
+     126,
+     757,
+     251
+    ],
+    [
+     231,
+     261,
+     400,
+     386
+    ],
+    [
+     410,
+     261,
+     579,
+     386
+    ],
+    [
+     588,
+     261,
+     757,
+     386
+    ]
+   ],
+   "prev": "f9",
+   "next": "f10",
+   "pick": "f12",
+   "actions": {
+    "backspace": {
+     "do": "click",
+     "at": [
+      50,
+      180
+     ]
+    }
+   }
+  },
+  "ロード": {
+   "keys": false,
+   "rows": [
+    [
+     231,
+     126,
+     400,
+     251
+    ],
+    [
+     410,
+     126,
+     579,
+     251
+    ],
+    [
+     588,
+     126,
+     757,
+     251
+    ],
+    [
+     231,
+     261,
+     400,
+     386
+    ],
+    [
+     410,
+     261,
+     579,
+     386
+    ],
+    [
+     588,
+     261,
+     757,
+     386
+    ]
+   ],
+   "prev": "f9",
+   "next": "f10",
+   "pick": "f12",
+   "actions": {
+    "backspace": {
+     "do": "click",
+     "at": [
+      50,
+      149
+     ]
+    }
+   }
+  }
+ }
+}

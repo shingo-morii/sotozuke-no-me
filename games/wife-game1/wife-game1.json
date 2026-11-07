@@ -1,0 +1,333 @@
+{
+ "name": "game1",
+ "size": [
+  1008,
+  681
+ ],
+ "window_title": "",
+ "process": "tyranoproject.exe",
+ "glyph": {
+  "bright": 180,
+  "dark": 110,
+  "radius": 2
+ },
+ "text": {
+  "band": [
+   165,
+   497,
+   865,
+   597
+  ],
+  "stable_s": 0.3,
+  "new_overlap": 0.7,
+  "typed": true,
+  "min_pixels": 40,
+  "end_marks": "・▪■."
+ },
+ "voice_rule": "all",
+ "tag": {
+  "kind": "glyph",
+  "box": [
+   136,
+   458,
+   330,
+   494
+  ],
+  "min_glyphs": 100,
+  "read_name": true
+ },
+ "screens": [
+  {
+   "name": "確認",
+   "kind": "confirm",
+   "box": [
+    390,
+    342,
+    619,
+    392
+   ],
+   "template": "tpl/confirm.png",
+   "match": "pixel",
+   "threshold": 0.95
+  },
+  {
+   "name": "選択肢",
+   "kind": "choice",
+   "box": [
+    236,
+    180,
+    380,
+    214
+   ],
+   "template": "tpl/choice.png",
+   "match": "pixel",
+   "threshold": 0.96
+  },
+  {
+   "name": "選択肢",
+   "kind": "choice",
+   "box": [
+    236,
+    180,
+    380,
+    214
+   ],
+   "template": "tpl/choice_hover1.png",
+   "match": "pixel",
+   "threshold": 0.96
+  },
+  {
+   "name": "メニュー",
+   "kind": "menu",
+   "box": [
+    30,
+    110,
+    200,
+    220
+   ],
+   "template": "tpl/menu.png",
+   "match": "pixel",
+   "threshold": 0.95
+  },
+  {
+   "name": "タイトル",
+   "kind": "menu",
+   "box": [
+    40,
+    140,
+    600,
+    265
+   ],
+   "template": "tpl/title.png",
+   "match": "pixel",
+   "threshold": 0.95
+  },
+  {
+   "name": "セーブ",
+   "kind": "menu",
+   "box": [
+    250,
+    70,
+    460,
+    152
+   ],
+   "template": "tpl/save.png"
+  },
+  {
+   "name": "ロード",
+   "kind": "menu",
+   "box": [
+    250,
+    70,
+    490,
+    152
+   ],
+   "template": "tpl/load.png"
+  },
+  {
+   "name": "コンフィグ",
+   "kind": "menu",
+   "box": [
+    18,
+    70,
+    460,
+    152
+   ],
+   "template": "tpl/config.png"
+  },
+  {
+   "name": "履歴",
+   "kind": "backlog",
+   "box": [
+    18,
+    70,
+    430,
+    152
+   ],
+   "template": "tpl/backlog.png"
+  }
+ ],
+ "choice": {
+  "box": [
+   231,
+   175,
+   870,
+   378
+  ],
+  "rows_by_count": {
+   "3": [
+    [
+     231,
+     175,
+     870,
+     219
+    ],
+    [
+     231,
+     254,
+     870,
+     298
+    ],
+    [
+     231,
+     333,
+     870,
+     377
+    ]
+   ]
+  },
+  "selected": "dark",
+  "dark_margin": 8
+ },
+ "keys": {
+  "advance": [],
+  "cursor": [
+   "lbutton"
+  ]
+ },
+ "scene": {
+  "box": [
+   0,
+   56,
+   1008,
+   450
+  ],
+  "text_diff": 25
+ },
+ "input": {
+  "text": {
+   "keys": false,
+   "actions": {
+    "f9": {
+     "do": "wheel",
+     "at": [
+      500,
+      300
+     ],
+     "amount": -1,
+     "as": "advance"
+    },
+    "backspace": {
+     "do": "click",
+     "at": [
+      976,
+      594
+     ]
+    }
+   }
+  },
+  "choice": {
+   "keys": false,
+   "rows": "choice",
+   "prev": "backspace",
+   "next": "delete",
+   "pick": "f9"
+  },
+  "メニュー": {
+   "keys": false,
+   "actions": {
+    "delete": {
+     "do": "click",
+     "at": [
+      500,
+      225
+     ]
+    },
+    "backspace": {
+     "do": "click",
+     "at": [
+      500,
+      553
+     ]
+    }
+   }
+  },
+  "セーブ": {
+   "keys": false,
+   "rows": [
+    [
+     250,
+     189,
+     760,
+     279
+    ],
+    [
+     250,
+     292,
+     760,
+     382
+    ],
+    [
+     250,
+     395,
+     760,
+     485
+    ],
+    [
+     250,
+     498,
+     760,
+     588
+    ]
+   ],
+   "prev": "backspace",
+   "next": "delete",
+   "pick": "f9"
+  },
+  "ロード": {
+   "keys": false,
+   "rows": [
+    [
+     250,
+     189,
+     760,
+     279
+    ],
+    [
+     250,
+     292,
+     760,
+     382
+    ],
+    [
+     250,
+     395,
+     760,
+     485
+    ],
+    [
+     250,
+     498,
+     760,
+     588
+    ]
+   ],
+   "prev": "backspace",
+   "next": "delete",
+   "pick": "f9"
+  },
+  "確認": {
+   "keys": false,
+   "rows": [
+    [
+     400,
+     350,
+     500,
+     382
+    ],
+    [
+     515,
+     350,
+     615,
+     382
+    ]
+   ],
+   "prev": "backspace",
+   "next": "delete",
+   "pick": "f9"
+  },
+  "タイトル": {
+   "keys": true
+  }
+ }
+}

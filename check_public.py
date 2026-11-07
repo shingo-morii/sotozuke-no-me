@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,8 @@ BINARY_SUFFIXES = {
     ".wav", ".mp3", ".ogg", ".flac", ".m4a", ".mp4", ".webm",
 }
 ALLOWED_MEDIA_DIR = "tests/synth_media/"
+# 画面の見分けに使う小さな画像。チームの妻のゲームの設定にだけ置く（11-07 守井）
+ALLOWED_TEMPLATE_RE = re.compile(r"^games/wife-game[0-9]+/tpl/[^/]+\.png$")
 # 開始前の文書の名前の一部。ファイル名で確かめる
 PREWORK_NAME_PARTS = [
     "設計書", "指示書", "手順の下書き", "探索の見直し", "初見探索",
@@ -83,6 +86,7 @@ def check_media(files: list[str]) -> list[str]:
         for rel in files
         if Path(rel).suffix.lower() in BINARY_SUFFIXES
         and not rel.replace("\\", "/").startswith(ALLOWED_MEDIA_DIR)
+        and not ALLOWED_TEMPLATE_RE.match(rel.replace("\\", "/"))
     ]
 
 
