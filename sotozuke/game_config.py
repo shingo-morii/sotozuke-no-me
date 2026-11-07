@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,24 @@ TEXT_KIND_NAME = "text"  # 文の画面。input の鍵に使う
 
 class ConfigError(ValueError):
     pass
+
+
+TOP_KEYS = ("name", "size", "window_title", "process", "voice_rule", "audio_threshold", "glyph", "text", "tag",
+            "scene", "screens", "choice", "keys", "walk", "input", "kind_frames", "next_marker")
+KEYS_KEYS = ("advance", "cursor")
+ACTION_KEYS = ("do", "at", "button", "amount", "as")
+
+
+def _known(raw: dict, allowed, label: str) -> None:
+    """知らない項目を書いたら、書ける項目の名前を並べて止める。前は型の誤りの文が出て、取り込むセッションが
+    本体のコードから項目を探した（11-07、2本目と3本目で見つけた）。書ける項目の説明は games/README.md。"""
+    unknown = sorted(set(raw) - set(allowed))
+    if unknown:
+        raise ConfigError(f"{label}: 知らない項目 {unknown}。書ける項目は {sorted(allowed)}（games/README.md）")
+
+
+def _names(cls) -> list[str]:
+    return [f.name for f in fields(cls)]
 
 
 def _box(value: Any, label: str, size: tuple[int, int]) -> Box:
@@ -219,19 +237,23 @@ def _load_template_path(base: Path, value: str, label: str) -> Path:
 
 def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
     try:
+        _known(data, TOP_KEYS, "設定")
         size = (int(data["size"][0]), int(data["size"][1]))
         voice_rule = data.get("voice_rule", "all")
         if voice_rule not in VOICE_RULES:
             raise ConfigError(f"voice_rule は {VOICE_RULES} のどれか: {voice_rule}")
 
+        _known(data.get("glyph", {}), _names(GlyphRule), "glyph")
         glyph = GlyphRule(**data.get("glyph", {}))
         text_raw = dict(data["text"])
+        _known(text_raw, _names(TextRule), "text")
         text_raw["ignore"] = tuple(text_raw.get("ignore", ()))
         text = TextRule(band=_box(text_raw.pop("band"), "text.band", size), **text_raw)
 
         tag = None
         if data.get("tag"):
             tag_raw = dict(data["tag"])
+            _known(tag_raw, _names(TagRule), "tag")
             if tag_raw.get("box") is not None:
                 tag_raw["box"] = _box(tag_raw["box"], "tag.box", size)
             tag = TagRule(**tag_raw)
@@ -243,6 +265,7 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
         scene = None
         if data.get("scene"):
             scene_raw = dict(data["scene"])
+            _known(scene_raw, _names(SceneRule), "scene")
             scene = SceneRule(box=_box(scene_raw.pop("box"), "scene.box", size), **scene_raw)
             if scene.describe not in SCENE_DESCRIBES:
                 raise ConfigError(f"scene.describe は {SCENE_DESCRIBES} のどれか: {scene.describe}")
@@ -250,6 +273,7 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
         screens = []
         for i, raw in enumerate(data.get("screens", [])):
             label = f"screens[{i}]"
+            _known(raw, _names(ScreenRule), label)
             if raw["kind"] not in SCREEN_KINDS:
                 raise ConfigError(f"{label}: 種類が違います {raw['kind']}")
             screens.append(ScreenRule(
@@ -274,6 +298,7 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
         choice = None
         if data.get("choice"):
             raw = data["choice"]
+            _known(raw, _names(ChoiceRule), "choice")
             rows = {
                 int(count): [_box(b, f"choice.rows[{count}]", size) for b in boxes]
                 for count, boxes in raw.get("rows_by_count", {}).items()
@@ -293,12 +318,14 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
         walk = None
         if data.get("walk"):
             walk_raw = dict(data["walk"])
+            _known(walk_raw, _names(WalkRule), "walk")
             if "move_keys" in walk_raw:
                 walk_raw["move_keys"] = tuple(walk_raw["move_keys"])
             walk = WalkRule(**walk_raw)
             if walk.view not in WALK_VIEWS:
                 raise ConfigError(f"walk.view は {WALK_VIEWS} のどれか: {walk.view}")
 
+        _known(data.get("keys", {}), KEYS_KEYS, "keys")
         inputs = _parse_input(data.get("input", {}), size, screens, choice)
 
         marker = data.get("next_marker")
@@ -344,11 +371,13 @@ def _parse_input(raw: dict, size: tuple[int, int], screens: list, choice) -> dic
     rules = {}
     for place, entry in raw.items():
         label = f"input.{place}"
+        _known(entry, _names(InputRule), label)
         if place not in places:
             raise ConfigError(f"{label}: 画面の名前か種類ではありません")
         actions = {}
         for key, act in entry.get("actions", {}).items():
             where = f"{label}.actions.{key}"
+            _known(act, ACTION_KEYS, where)
             action = MouseAction(
                 do=act["do"], at=_point(act["at"], where, size), button=act.get("button", "left"),
                 amount=int(act.get("amount", 0)), as_kind=act.get("as", ""),

@@ -21,6 +21,7 @@ from .director import Director, Services
 from .game_audio import GameAudioMonitor
 from .game_config import GameConfig, load_config
 from .inputs import InputWatcher, KeyMapper
+from .nvda import BrowseModeNotice
 from .player import Player, load_audio, tone
 from .reader import ClaudeReader
 from .sender import MouseSender
@@ -152,6 +153,7 @@ class App:
         self.inputs = InputWatcher(self.mapper, self._on_command, is_active=self.capture.in_front,
                                    is_own=self.sender.is_own if self.sender else (lambda name: False))
         self.size_warned = False
+        self.browse_notice = BrowseModeNotice()
         self.running = True
 
     def speech(self, text: str):
@@ -201,6 +203,10 @@ class App:
     started = 0.0
 
     def _frame(self, now: float) -> None:
+        if not self.browse_notice.checked and self.capture.refresh():
+            notice = self.browse_notice.check(self.capture.hwnd, self.log)
+            if notice:
+                self.announce(notice)
         if not self.capture.in_front():
             return
         size = self.capture.size()

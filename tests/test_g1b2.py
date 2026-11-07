@@ -478,3 +478,77 @@ def test_gate_empty_name_is_read_again_once(style, tmp_path, monkeypatch):
     show(sim, S[2], "駅前")
     assert sim.said("sentence") == [S[0], f"駅前。{S[1]}", f"駅前。{S[2]}"]
     assert sim.reader.name_calls == 2
+
+
+# H5 NVDA の案内、設定の書き方
+
+
+def test_gate_browse_mode_notice_once_for_web_window_with_nvda():
+    from sotozuke.nvda import NOTICE, BrowseModeNotice
+
+    logs = []
+    notice = BrowseModeNotice(is_running=lambda: True, classes_of=lambda hwnd: ["Chrome_WidgetWin_1", "Intermediate D3D Window"])
+    assert notice.check(123, lambda event, **f: logs.append((event, f))) == NOTICE
+    assert notice.check(123, lambda event, **f: logs.append((event, f))) is None  # 1回だけ
+    assert logs[0][0] == "nvda_check" and logs[0][1]["web"] is True
+    assert "Chrome_WidgetWin_1" in logs[0][1]["classes"]
+
+
+def test_gate_no_browse_mode_notice_otherwise():
+    from sotozuke.nvda import BrowseModeNotice
+
+    log = lambda event, **f: None
+    assert BrowseModeNotice(lambda: True, lambda h: ["GameWindowClass"]).check(1, log) is None
+    assert BrowseModeNotice(lambda: False, lambda h: ["Chrome_WidgetWin_1"]).check(1, log) is None
+    waiting = BrowseModeNotice(lambda: True, lambda h: ["Chrome_WidgetWin_1"])
+    assert waiting.check(None, log) is None and not waiting.checked  # 窓がまだ無ければ、見つかってから見る
+
+
+def test_notice_text_names_the_keys():
+    from sotozuke.nvda import NOTICE
+
+    assert "ブラウズモード" in NOTICE and "フォーカスモード" in NOTICE and "NVDA キーとスペース" in NOTICE
+
+
+def readme_all_items():
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent.parent / "games" / "README.md").read_text(encoding="utf-8")
+    return text.split("## すべての項目", 1)[1].split("## キーで動かないゲームの書き方", 1)[0]
+
+
+def test_gate_readme_lists_every_config_item():
+    """設定のデータクラスの欄と、parse_config が読む項目の名前が、全部 README の「すべての項目」にある。"""
+    from dataclasses import fields
+
+    from sotozuke import game_config as G
+
+    section = readme_all_items()
+    names = set(G.TOP_KEYS) | set(G.KEYS_KEYS) | set(G.ACTION_KEYS)
+    for cls in (G.GlyphRule, G.TextRule, G.TagRule, G.SceneRule, G.ScreenRule, G.ChoiceRule, G.WalkRule, G.InputRule):
+        names |= {f.name for f in fields(cls)}
+    values = set(G.SCREEN_KINDS) | set(G.MATCHES) | set(G.WALK_VIEWS) | set(G.SCENE_DESCRIBES) | set(G.VOICE_RULES)
+    values |= {"hline", "glyph", "either", "bright", "dark", "move", "click", "wheel", "left", "right"}
+    missing = sorted(n for n in names | values if f"`{n}`" not in section)
+    assert missing == []
+
+
+def test_gate_unknown_item_names_the_items_you_can_write(game_path):
+    import pytest
+    from sotozuke.game_config import ConfigError
+
+    original = game_path.read_text(encoding="utf-8")
+    for change, place, known in (
+        (lambda d: d["scene"].update(diff=3), "scene", "text_diff"),
+        (lambda d: d.update(frames=5), "設定", "kind_frames"),
+        (lambda d: d["screens"][0].update(min=3), "screens[0]", "read_min_glyphs"),
+        (lambda d: d["choice"].update(margin=3), "choice", "bright_margin"),
+        (lambda d: d.update(walk={"viewpoint": "first_person"}), "walk", "view"),
+        (lambda d: d.update(input={"text": {"actions": {"f9": {"do": "click", "at": [1, 1], "kind": "x"}}}}),
+         "input.text.actions.f9", "as"),
+    ):
+        game_path.write_text(original, encoding="utf-8")
+        with pytest.raises(ConfigError) as caught:
+            edit_game(game_path, change)
+        message = str(caught.value)
+        assert message.startswith(place) and "知らない項目" in message and known in message and "games/README.md" in message
