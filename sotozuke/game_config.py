@@ -11,6 +11,8 @@ from .inputs import DEFAULT_BINDINGS, MOUSE_BUTTONS, RESERVED_KEYS, VK
 Box = tuple[int, int, int, int]  # x0, y0, x1, y1。x1 と y1 は含まない
 
 VOICE_RULES = ("tag", "audio", "all")
+MATCHES = ("glyph", "pixel", "absent")
+KIND_FRAMES = 2  # 種類が変わったと決めるまで、続けて同じ種類に見えた枚数の既定
 SCREEN_KINDS = (
     "choice",       # 選択肢
     "map",          # 行き先の地図
@@ -94,7 +96,9 @@ class ScreenRule:
     threshold: float = 0.7
     prompt: str = ""       # ゲームごとの読み方。入った直後の読み手への頼み
     prompt_move: str = ""  # カーソルを動かしたあとの頼み
-    match: str = "glyph"   # glyph は字の形で比べる。pixel は窓の枠など字でないものを画素で比べる
+    # glyph は字の形で比べる。pixel は窓の枠など字でないものを画素で比べる。absent は見本（文の枠の一部など）を
+    # 画素で比べ、当たらないときにこの画面と見る。決まった字や枠の無い画面（歩く画面）のため。ほかの見本が全部外れたときだけ見る
+    match: str = "glyph"
 
 
 @dataclass(frozen=True)
@@ -188,6 +192,7 @@ class GameConfig:
     audio_threshold: float = 0.05   # 音で見るとき、声と見なす針の値。背景の音楽より大きくする
     walk: WalkRule | None = None
     input: dict[str, InputRule] = field(default_factory=dict)  # 鍵は画面の名前か種類（text など）
+    kind_frames: int = KIND_FRAMES  # 画面の種類が変わったと決めるまで、続けて同じ種類に見えた枚数
     source: Path | None = None
 
     def input_keys(self) -> set[str]:
@@ -247,6 +252,8 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
                 prompt_move=raw.get("prompt_move", ""),
                 match=raw.get("match", "glyph"),
             ))
+            if screens[-1].match not in MATCHES:
+                raise ConfigError(f"{label}: match は {MATCHES} のどれか: {screens[-1].match}")
 
         choice = None
         if data.get("choice"):
@@ -277,6 +284,9 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
         inputs = _parse_input(data.get("input", {}), size, screens, choice)
 
         marker = data.get("next_marker")
+        kind_frames = int(data.get("kind_frames", KIND_FRAMES))
+        if kind_frames < 1:
+            raise ConfigError(f"kind_frames は1以上: {kind_frames}")
         return GameConfig(
             name=data["name"], size=size,
             window_title=data.get("window_title", ""),
@@ -287,7 +297,7 @@ def parse_config(data: dict[str, Any], base: Path = Path(".")) -> GameConfig:
             advance_keys=tuple(data.get("keys", {}).get("advance", ["enter"])),
             cursor_keys=tuple(data.get("keys", {}).get("cursor", ["up", "down"])),
             audio_threshold=float(data.get("audio_threshold", 0.05)),
-            walk=walk, input=inputs,
+            walk=walk, input=inputs, kind_frames=kind_frames,
         )
     except KeyError as exc:
         raise ConfigError(f"設定の項目がありません: {exc}") from exc

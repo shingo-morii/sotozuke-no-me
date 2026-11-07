@@ -113,3 +113,102 @@ def test_gate_without_bright_margin_reads_top_row_as_before(game_path, style):
     sim.view = choice_view(["一つ目", "二つ目"], selected=-1)
     sim.run(3.0)
     assert sim.said("choice")[0].startswith("選択肢。一つ目。二つ目。選んでいるのは、")
+
+
+# H2 画面の種類
+
+
+WINDOW_PATCH = (170, 690, 420, 706)  # 合成の型 b の文の枠の、字の下の帯
+
+
+def absent_walk(tmp_path, style, frames=None):
+    """文の枠が無いことで歩く画面と見る設定。枠の一部を見本にし、閾値は当たりと外れの間に置く。"""
+    from PIL import Image
+    from sotozuke.image_ops import crop, to_gray
+
+    x0, y0, x1, y1 = WINDOW_PATCH
+    with_window = [synth.render(style, synth.View(scene=s, text=S[0]), t) for s in (1, 2) for t in (0.0, 3.0)]
+    without = [synth.render(style, synth.View(scene=s), t) for s in (1, 2) for t in (0.0, 3.0)]
+    template = to_gray(crop(with_window[0], WINDOW_PATCH))
+    Image.fromarray(template).save(tmp_path / "tpl_window.png")
+
+    def score(frame):
+        return 1.0 - float(abs(to_gray(crop(frame, WINDOW_PATCH)).astype(int) - template.astype(int)).mean()) / 255.0
+
+    low, high = max(score(f) for f in without), min(score(f) for f in with_window)
+    assert low < high
+    path = synth.write_game(style, tmp_path)
+
+    def change(data):
+        data["screens"].append({"name": "外を歩く", "kind": "walk", "box": [x0, y0, x1, y1],
+                                "template": "tpl_window.png", "threshold": (low + high) / 2, "match": "absent"})
+        if frames:
+            data["kind_frames"] = frames
+
+    return edit_game(path, change)
+
+
+def kinds(sim):
+    return [r["new"] for r in sim.events("kind")]
+
+
+def test_gate_absent_match_sees_walk_without_window(tmp_path):
+    style = synth.STYLES["b"]
+    sim = Sim(style, absent_walk(tmp_path, style))
+    sim.view = synth.View(scene=1, text=S[0])
+    sim.run(2.0)
+    assert kinds(sim) == []
+    assert sim.said("sentence") == [S[0]]
+    sim.view = synth.View(scene=2)  # 文の枠の無い絵
+    sim.run(3.0)
+    assert kinds(sim) == ["walk"]
+    assert any("歩く画面です" in t for t in sim.said())
+    sim.view = synth.View(scene=2, text=S[1])  # 歩く画面で話しかけると文の枠が出る
+    sim.run(3.0)
+    assert kinds(sim) == ["walk", "text"]
+    assert sim.said("sentence")[-1] == S[1]
+
+
+def test_gate_absent_match_yields_to_other_templates(tmp_path):
+    """ほかの見本が当たる画面は、文の枠が無くてもそちら。"""
+    style = synth.STYLES["b"]
+    sim = Sim(style, absent_walk(tmp_path, style))
+    sim.view = synth.View(scene=1, hint="上下左右 選択  決定  戻る", menu_title="セーブ", menu_items=["枠01", "枠02"])
+    sim.run(3.0)
+    assert kinds(sim) == ["menu"]
+
+
+def flicker(sim):
+    """歩く画面の見分けが、ときどき3枚だけ外れる（その間は文の枠があるように見える）。"""
+    sim.view = synth.View(scene=2)
+    sim.run(3.0)
+    for _ in range(6):
+        sim.view = synth.View(scene=2, text=S[2])
+        sim.run(0.3)
+        sim.view = synth.View(scene=2)
+        sim.run(2.5)
+
+
+def test_gate_kind_frames_stops_repeated_walk_announcements(tmp_path):
+    style = synth.STYLES["b"]
+    sim = Sim(style, absent_walk(tmp_path, style, frames=5))
+    flicker(sim)
+    assert kinds(sim) == ["walk"]
+    assert sum("歩く画面です" in t for t in sim.said()) == 1
+
+
+def test_without_kind_frames_flicker_repeats(tmp_path):
+    """書かないときは今のまま（2枚）。同じ揺れで何回も言う。直す前の動きを確かめる。"""
+    style = synth.STYLES["b"]
+    sim = Sim(style, absent_walk(tmp_path, style))
+    flicker(sim)
+    assert kinds(sim).count("walk") > 1
+    assert sum("歩く画面です" in t for t in sim.said()) > 1
+
+
+def test_kind_frames_must_be_positive(game_path):
+    import pytest
+    from sotozuke.game_config import ConfigError
+
+    with pytest.raises(ConfigError):
+        edit_game(game_path, lambda d: d.update(kind_frames=0))

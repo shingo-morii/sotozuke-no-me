@@ -15,7 +15,6 @@ from .game_config import GameConfig, ScreenRule
 from .image_ops import crop, dilate, glyph_mask, new_pixels, overlap, small_gray, to_gray
 
 TEXT_KIND = "text"
-KIND_CONFIRM_FRAMES = 2
 SETTLE_FRAMES = 2
 SETTLE_CELL_DIFF = 25
 SETTLE_CELLS = 3
@@ -240,7 +239,7 @@ class ScreenClassifier:
 
     def _template(self, screen: ScreenRule) -> np.ndarray:
         gray = to_gray(np.asarray(Image.open(screen.template).convert("RGB")))
-        if screen.match == "pixel":
+        if screen.match in ("pixel", "absent"):
             return gray
         mask = glyph_mask(gray, self.glyph)
         if not mask.any():
@@ -248,7 +247,7 @@ class ScreenClassifier:
         return mask
 
     def _score(self, frame: np.ndarray, screen: ScreenRule, template: np.ndarray, masks: dict) -> float:
-        if screen.match == "pixel":
+        if screen.match in ("pixel", "absent"):
             gray = to_gray(crop(frame, screen.box)).astype(np.int16)
             return 1.0 - float(np.abs(gray - template).mean()) / 255.0
         mask = masks.get(screen.box)
@@ -265,17 +264,26 @@ class ScreenClassifier:
         """基準を超えたもののうち、いちばん重なる見本を選ぶ。似た案内の画面を取り違えないため。
 
         確認の窓のように重なる画面は、下の画面より先に見る。設定の並びで pixel を前に置く。
+        absent の画面（見本が当たらないときの画面）は、ほかが全部外れたときだけ、並びの順に見る。
         """
         best = None
         best_score = 0.0
         masks: dict = {}
+        absent = []
         for screen, template in self.screens:
+            if screen.match == "absent":
+                absent.append((screen, template))
+                continue
             score = self._score(frame, screen, template, masks)
             if score >= screen.threshold:
                 if screen.match == "pixel":
                     return screen
                 if score > best_score:
                     best, best_score = screen, score
+        if best is None:
+            for screen, template in absent:
+                if self._score(frame, screen, template, masks) < screen.threshold:
+                    return screen
         return best
 
 
@@ -351,7 +359,7 @@ class Watcher:
             else:
                 self.pending = screen.name if screen else TEXT_KIND
                 self.pending_count = 1
-            if self.pending_count >= KIND_CONFIRM_FRAMES:
+            if self.pending_count >= self.config.kind_frames:
                 # 文のすぐあとに選択肢が重なると、文が止まりきらない。読み落とさないように知らせる
                 if self.kind == TEXT_KIND and new_kind == "choice" and self.text.flush():
                     band = crop(frame, self.config.text.band)
