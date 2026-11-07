@@ -583,3 +583,23 @@ def test_gate_announcements_do_not_cut_each_other():
             posted.pop(0)()
     assert played == [3, 5, 7]
     assert not announcer.current
+
+
+# H6 スキルと書き方
+
+
+def test_gate_skill_has_the_lessons_of_the_second_and_third_games():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    skill = (root / ".claude" / "skills" / "add-game" / "SKILL.md").read_text(encoding="utf-8")
+    steps = skill.split("## 調べる順", 1)[1].split("## 見分けの決まり", 1)[0]
+    assert "NVDA" in steps.split("\n2. ", 1)[0]  # 調べる順の最初に NVDA のモード
+    lessons = [line for line in skill.splitlines() if line.startswith("- 11/7 2本目と3本目のゲームから：")]
+    assert len(lessons) >= 10
+    for word in ("フォーカスモード", "乗せた状態", "F11", "前に出ているか", "画素の見本", "縁の線",
+                 "`read_start` と `read_done`", "プロセスの番号", "12枚", "設定の画面が無い", "すべての項目"):
+        assert word in skill, word
+    readme = (root / "games" / "README.md").read_text(encoding="utf-8")
+    keys = readme.split("### 対応表に使えるキー", 1)[1]
+    assert "ブラウズモード" in keys and "フォーカスモード" in keys and "`nvda_check`" in keys
