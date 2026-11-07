@@ -4,9 +4,15 @@ Built with Claude: Japan 2026（2026年11月2日〜11月10日）の作品。
 
 全盲の人が、市販のノベルゲームを自分の手で遊ぶための道具。ゲームの画面を見て、声のない文、選択肢、メニュー、場面の絵を、声で伝える。操作は利用者のキーボードかコントローラ。作者の守井は全盲の工学博士で、この道具のいちばん最初の利用者でもある。
 
-問題の数字：（提出の前に、出典を確かめて書く）
-
 デモ動画：【動画の URL】
+
+## なぜ作ったか
+
+1. 目の見えない人は、遊べるゲームを自分たちで作ってきた。音だけで遊ぶ「オーディオゲーム」で、英語圏には [AudioGames.net](https://audiogames.net/)、日本には有志の [視覚障害者向けアクセシブルゲーム情報まとめWiki](https://www.mm-galabo.com/AcGameWiki/) がある。全盲の作り手が、自分が遊ぶために作り始めた例もある（[4Gamer、2018年](https://www.4gamer.net/games/999/G999901/20181002079/)）。作り手は日本で3〜4人、英語圏で数十人ほどと、同じ記事で作り手本人が話している
+2. 市販のゲームで、全盲の人が遊べるものはごく一部。音だけで遊ぶ『リアルサウンド 〜風のリグレット〜』（1997年、セガサターン、[Kill Screen](https://www.killscreen.com/real-sound-audiogames-blindness-shadow-history-gaming.md)）、60を超えるアクセシビリティの設定を持つ『The Last of Us Part II』（2020年、[公式](https://naughtydog.com/blog/THE_LAST_OF_US_PART_II_ACCESSIBILITY_FEATURES_DETAILED)）、コースや曲がり角を音で知らせる Forza Motorsport の Blind Driving Assists（2023年、[公式](https://news.xbox.com/en-us/2023/04/27/forza-motorsport-accessibility-features/)）などが、よく挙がる例になる。2022年の記事は、視覚をまったく使わずに完全に遊べる作品を「今のところ『The Last of Us Part II』くらい」と書いた（[電ファミニコゲーマー](https://news.denfaminicogamer.jp/kikakuthetower/220728d)）。画面読み上げに対応した市販のノベルゲームは、調べた範囲では見つからなかった
+3. 目の見えない人は、遊ぶ人の中で少ない。日本で視覚障害の身体障害者手帳を持つ人は、在宅で約27万3千人（2022年、[厚生労働省](https://www.mhlw.go.jp/toukei/list/seikatsu_chousa_b_r04.html)）。人口の約0.22%で、約450人に1人になる。世界で失明している人は、約4330万人と推計されている（2020年、[Lancet Global Health](https://pubmed.ncbi.nlm.nih.gov/33275950/)）。見た目が中心の娯楽のゲームで、この人たちまで届く作品はごく一部にとどまっている
+
+ノベルゲームは、字を読んで進めるゲームなので、字と絵が声になれば遊べる。外付けの目は、ゲームにもゲーム会社にも手を入れずに、画面の外から字と絵を声にする。
 
 ## 何ができるか
 
