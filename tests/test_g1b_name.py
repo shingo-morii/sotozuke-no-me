@@ -65,13 +65,15 @@ def test_name_is_not_read_when_not_written(style, tmp_path):
 
 
 def test_empty_name_is_remembered_and_not_spoken(style, tmp_path, monkeypatch):
+    """空の札は、2回続けて空だったら覚えて読まない（11-07 に、1回で覚えるのを改めた）。"""
     monkeypatch.setattr(synth, "MOTION", 0.0)
     sim = Sim(style, named_game(style, tmp_path))
     sim.reader.truth_name = lambda: ""
     show(sim, S[0], "山田")
     show(sim, S[2], "山田")
-    assert sim.said("sentence") == [S[0], S[2]]
-    assert sim.reader.name_calls == 1
+    show(sim, S[3], "山田")
+    assert sim.said("sentence") == [S[0], S[2], S[3]]
+    assert sim.reader.name_calls == 2
 
 
 def test_read_name_needs_box(tmp_path):

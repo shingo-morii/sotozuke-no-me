@@ -170,6 +170,11 @@ class Director:
         self.after_speech: Callable[[], None] | None = None
         self.screen_cache: dict[tuple[str, bool, str], tuple[str, str, np.ndarray]] = {}
         self.names: dict[str, str] = {}  # 札の字の形ごとに読んだ名前。同じ札は読み直さない
+        # 1回だけ空で返った札の形。もう1回読んで、2回続けて空なら空と覚える。
+        # 1回目で空と覚えると、その札は二度と読まない（11-07、場所の名前の札を読まなかった件で見つけた）
+        self.names_empty_once: set[str] = set()
+        # F6 で利用者に読んだ文。次に文を進めるまで、自動の読みが同じ字を返しても言わない（11-07、二重の読み）
+        self.repeated_text: str | None = None
         self.row_index: int | None = None  # 行を選ぶ画面で、本体がマウスを乗せた行
         self.row_moved = False             # この画面で利用者が行を動かしたか。最初の前後のキーは1行目へ
         self.row_move: int | None = None   # 今のキーで乗せる行
@@ -433,7 +438,11 @@ class Director:
             return text, self.s.speech(text)
 
         def done(value, error):
-            self.names.update(learned)  # 1本の流れで覚える
+            for name_key, name in learned.items():  # 1本の流れで覚える
+                if name or name_key in self.names_empty_once:
+                    self.names[name_key] = name
+                else:
+                    self.names_empty_once.add(name_key)
             self._on_sentence(generation, value, error)
 
         self.s.log("read_start", generation=generation)
@@ -483,7 +492,7 @@ class Director:
             return event.has_tag
         return self.s.is_voice_playing()
 
-    def _on_sentence(self, generation: int, value, error: Exception | None) -> None:
+    def _on_sentence(self, generation: int, value, error: Exception | None, by_user: bool = False) -> None:
         if generation != self.generation:
             self.s.log("drop_stale", what="sentence", generation=generation)
             return
@@ -496,6 +505,12 @@ class Director:
         text, audio = value
         self.s.log("read_done", text=text, generation=generation)
         if text in self.config.text.ignore:
+            return
+        if by_user:
+            self.repeated_text = text
+        elif text == self.repeated_text:
+            self.s.log("skip_repeated", text=text)
+            self.spoken = (text, audio)
             return
         self.spoken = (text, audio)
         scene = self.scene
@@ -882,6 +897,7 @@ class Director:
         self.last_key_t = self.s.clock()
         self.tag_recheck_at = None
         self.same_check_at = self.s.clock() + SAME_AGAIN_S
+        self.repeated_text = None
         if self.choice:
             self.choice.closing = True  # 決定のあとの動きは読まない
         self._next_generation()
@@ -919,6 +935,7 @@ class Director:
             self._say(self.screen.text, self.screen.audio, "screen")
             return
         if self.spoken:
+            self.repeated_text = self.spoken[0]
             self._say(self.spoken[0], self.spoken[1], "sentence")
             return
         band = self.band
@@ -942,7 +959,7 @@ class Director:
             text = strip_end_mark(result.text, self.config.text.end_marks)
             return (text, self.s.speech(text)) if text else None
 
-        self.s.tasks.submit(work, lambda v, e: self._on_sentence(generation, v, e))
+        self.s.tasks.submit(work, lambda v, e: self._on_sentence(generation, v, e, by_user=True))
 
     def _read_whole_screen(self) -> None:
         frame = self.latest_frame

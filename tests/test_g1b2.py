@@ -415,3 +415,66 @@ def test_scene_describe_must_be_known(game_path):
 
     with pytest.raises(ConfigError):
         edit_game(game_path, lambda d: d["scene"].update(describe="always"))
+
+
+# H4 F6 のあとの二重の読み、空の名前
+
+
+def voiced_line(sim, text):
+    """札のある文（声がある文）。本体は自動では読まない。"""
+    sim.view = synth.View(scene=1, text=text, name="山田")
+    sim.run(1.5)
+
+
+def flicker_window(sim, text):
+    """文の枠が一瞬消えて、同じ字が札なしでまた出る。本体には新しい声の無い文に見える。"""
+    sim.view = synth.View(scene=1)
+    sim.run(0.3)
+    sim.view = synth.View(scene=1, text=text)
+    sim.run(2.5)
+
+
+def test_gate_f6_text_is_not_read_again_automatically(game_path, style):
+    sim = Sim(style, load_config(game_path))
+    voiced_line(sim, S[0])
+    assert sim.said("sentence") == []
+    sim.press("repeat", "f6")
+    sim.run(1.5)
+    assert sim.said("sentence") == [S[0]]
+    flicker_window(sim, S[0])
+    assert sim.said("sentence") == [S[0]]  # 前は同じ字をもう一度読んだ
+    assert sim.events("skip_repeated")
+
+
+def test_same_text_after_advance_is_read(game_path, style):
+    sim = Sim(style, load_config(game_path))
+    voiced_line(sim, S[0])
+    sim.press("repeat", "f6")
+    sim.run(1.5)
+    sim.press("advance", "enter")
+    flicker_window(sim, S[0])
+    assert sim.said("sentence") == [S[0], S[0]]
+
+
+def test_other_text_after_f6_is_read(game_path, style):
+    sim = Sim(style, load_config(game_path))
+    voiced_line(sim, S[0])
+    sim.press("repeat", "f6")
+    sim.run(1.5)
+    flicker_window(sim, S[1])
+    assert sim.said("sentence") == [S[0], S[1]]
+
+
+def test_gate_empty_name_is_read_again_once(style, tmp_path, monkeypatch):
+    """札の字が一度空で返っても、次の札でもう一度読む。2回続けて空なら覚えて、それからは読まない。"""
+    from test_g1b_name import named_game, show
+
+    monkeypatch.setattr(synth, "MOTION", 0.0)
+    sim = Sim(style, named_game(style, tmp_path))
+    answers = iter(["", "駅前"])
+    sim.reader.truth_name = lambda: next(answers)
+    show(sim, S[0], "駅前")
+    show(sim, S[1], "駅前")
+    show(sim, S[2], "駅前")
+    assert sim.said("sentence") == [S[0], f"駅前。{S[1]}", f"駅前。{S[2]}"]
+    assert sim.reader.name_calls == 2
