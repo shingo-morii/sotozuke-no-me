@@ -120,6 +120,36 @@ def build_voice(args):
     return SapiVoice(args.voice)
 
 
+class Announcer:
+    """本体からの知らせ（始めの挨拶、NVDA の案内、大きさの違い）を、前の知らせを切らずに順に鳴らす。
+
+    前は続けて知らせると、あとの知らせが前の知らせを置き換えた（11-07、1本目で挨拶と NVDA の案内が切れた）。
+    ゲームの文の読み上げは、今のまま知らせを置き換える。
+    """
+
+    def __init__(self, player, post):
+        self.player = player
+        self.post = post
+        self.waiting: list = []
+        self.current = False
+
+    def say(self, audio) -> None:
+        if self.current and self.player.playing:
+            self.waiting.append(audio)
+            return
+        self._play(audio)
+
+    def _play(self, audio) -> None:
+        self.current = True
+        self.player.play(audio, on_end=lambda: self.post(self._next))
+
+    def _next(self) -> None:
+        if self.waiting:
+            self._play(self.waiting.pop(0))
+        else:
+            self.current = False
+
+
 class App:
     def __init__(self, config: GameConfig, args):
         self.config = config
@@ -154,6 +184,7 @@ class App:
                                    is_own=self.sender.is_own if self.sender else (lambda name: False))
         self.size_warned = False
         self.browse_notice = BrowseModeNotice()
+        self.announcer = Announcer(self.player, self.tasks.post)
         self.running = True
 
     def speech(self, text: str):
@@ -169,7 +200,7 @@ class App:
 
     def announce(self, text: str) -> None:
         self.log("announce", text=text)
-        self.player.play(self.speech(text))
+        self.announcer.say(self.speech(text))
 
     def run(self) -> None:
         self.announce(f"{self.args.greeting}")

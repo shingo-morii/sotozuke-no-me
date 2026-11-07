@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
+
 import synth
 from harness import Sim
 from sotozuke.game_config import load_config
@@ -552,3 +554,32 @@ def test_gate_unknown_item_names_the_items_you_can_write(game_path):
             edit_game(game_path, change)
         message = str(caught.value)
         assert message.startswith(place) and "知らない項目" in message and known in message and "games/README.md" in message
+
+
+def test_gate_announcements_do_not_cut_each_other():
+    """挨拶、NVDA の案内、大きさの違いを続けて知らせても、前の知らせを切らずに順に鳴らす。"""
+    from harness import FakeClock, FakeSound
+    from sotozuke.app import Announcer
+
+    clock = FakeClock()
+    sound = FakeSound(clock)
+    posted = []
+    announcer = Announcer(sound, posted.append)
+    played = []
+    original = sound.play
+
+    def play(audio, on_end=None):
+        played.append(len(audio))
+        original(audio, on_end)
+
+    sound.play = play
+    for length in (3, 5, 7):
+        announcer.say(np.zeros(length, np.float32))
+    assert played == [3]
+    for _ in range(200):
+        clock.now += 0.1
+        sound.run_due()
+        while posted:
+            posted.pop(0)()
+    assert played == [3, 5, 7]
+    assert not announcer.current
